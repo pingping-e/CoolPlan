@@ -200,8 +200,10 @@ local function layoutHud(o)
 
     local totalW = PAD + barH + 4 + barW + PAD
     if tpos == "icon" then
-      count:SetPoint("RIGHT", bar, "RIGHT", -6, 0)
-      count:SetJustifyH("RIGHT")
+      -- "in icon/bar" for the bar style = inside the small left icon
+      count:SetPoint("CENTER", icon, "CENTER", 0, 0)
+      count:SetJustifyH("CENTER")
+      if fontPath and count.SetFont then count:SetFont(fontPath, math.max(12, barH - 6), "OUTLINE") end
     else
       count:SetPoint("LEFT", bar, "RIGHT", 8, 0)
       count:SetJustifyH("LEFT")
