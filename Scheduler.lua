@@ -138,13 +138,20 @@ local ALWAYS_SHOWN = { raid_defensive = true }
 -- previewAll: the Timeline "Test" is a preview of the whole plan, so it must NOT
 -- filter to the logged-in character's name or hide categories — otherwise testing
 -- on a different char (or with log/team names that don't match) shows nothing.
-local function buildCues(reminders, boss, previewAll)
+-- forPlayer (preview only): show that exact player's casts (+ always-shown
+-- categories), ignoring the live "only me"/category filters.
+local function buildCues(reminders, boss, previewAll, forPlayer)
   local o = ns.DB.Options()
   local cues = {}
   for _, r in ipairs(reminders or {}) do
     local common = ALWAYS_SHOWN[r.category or ""]
-    local meOk = previewAll or common or (not o.filterToMe) or nameMatchesMe(r.player)
-    if meOk and (previewAll or ns.DB.CategoryEnabled(r.category)) then
+    local meOk
+    if forPlayer then
+      meOk = common or (strlower(r.player or "") == strlower(forPlayer))
+    else
+      meOk = previewAll or common or (not o.filterToMe) or nameMatchesMe(r.player)
+    end
+    if meOk and (previewAll or forPlayer or ns.DB.CategoryEnabled(r.category)) then
       cues[#cues + 1] = {
         kind = "cd", timeMs = r.timeMs, spellId = r.spellId,
         player = r.player, category = r.category, spellName = r.spellName, alert = r.alert,
@@ -198,13 +205,18 @@ end
 -- `reminders`/`boss` come from a saved note. `speed` (default 1) accelerates
 -- the virtual clock. `onTick(elapsed, total)` drives the Timeline playhead.
 -- Honors the same filterToMe / category / showBoss options as a real pull.
-function Scheduler.StartPreview(reminders, boss, speed, onTick)
-  -- Preview honors the live filters (only-my-character + Show categories) so it
-  -- shows what you'd actually see in the fight. If that leaves nothing (e.g.
-  -- testing on a char whose name isn't in the plan), fall back to the whole plan
-  -- so the Test is never a dead end.
-  local cues = buildCues(reminders or {}, boss, false)
-  if #cues == 0 then cues = buildCues(reminders or {}, boss, true) end
+-- forPlayer: "__all__" = everyone, "<name>" = that player, nil/"" = the live
+-- "only my character" filter (with a whole-plan fallback if it leaves nothing).
+function Scheduler.StartPreview(reminders, boss, speed, onTick, forPlayer)
+  local cues
+  if forPlayer == "__all__" then
+    cues = buildCues(reminders or {}, boss, true)
+  elseif forPlayer and forPlayer ~= "" then
+    cues = buildCues(reminders or {}, boss, false, forPlayer)
+  else
+    cues = buildCues(reminders or {}, boss, false)
+    if #cues == 0 then cues = buildCues(reminders or {}, boss, true) end
+  end
   if #cues == 0 then return false end
   activeId = -2
   return run(cues, { preview = true, speed = speed or 1, onTick = onTick })

@@ -15,7 +15,7 @@ local LABEL_W = 96             -- left gutter for player/track names
 local BOSS_ROW_H = 26
 local ICON = 20
 
-local page, catDD, grpDD, bossDD, noteDD, testBtn, status
+local page, catDD, grpDD, bossDD, noteDD, previewDD, testBtn, status
 local scroll, canvas, playhead, hbar
 local zoomBtns = {}
 local markerPool = {}          -- reusable icon markers
@@ -39,6 +39,7 @@ local selGrp = 1               -- index into the category's groups
 local selBoss = 1              -- index into the group's bosses
 local selEnc = nil             -- resolved encounterID for the selected boss
 local selNote = nil            -- plan index within the encounter
+local selPreviewAs = "__all__" -- preview filter: "__all__" | a player name
 
 -- ── spell info ───────────────────────────────────────────────────────────────
 local function spellIcon(spellId)
@@ -319,7 +320,7 @@ local function startTest(speed)
     return
   end
   local ok = ns.Scheduler.StartPreview(p.reminders, e and e.boss, speed,
-    function(elapsed) setPlayhead(elapsed) end)
+    function(elapsed) setPlayhead(elapsed) end, selPreviewAs)
   if not ok then
     if status then status:SetText("|cffffcc00Nothing to play — this note has no cooldowns. Pick another boss / note above.|r") end
     return
@@ -379,6 +380,39 @@ local function noteItems()
   return items
 end
 
+-- "Preview as" items: Everyone + each distinct player in the selected note.
+local function previewItems()
+  local items = { { text = "Everyone", value = "__all__" } }
+  local _, p = currentNote()
+  if p then
+    local seen = {}
+    for _, r in ipairs(p.reminders or {}) do
+      local pl = r.player
+      if pl and pl ~= "" and not seen[pl] then
+        seen[pl] = true
+        items[#items + 1] = { text = pl, value = pl }
+      end
+    end
+  end
+  return items
+end
+
+-- Default the preview filter to the logged-in character if present in the note,
+-- else Everyone. Resets when the note changes (keeps it from going stale).
+local function refreshPreviewDD()
+  if not previewDD then return end
+  local _, p = currentNote()
+  local me = UnitName and UnitName("player")
+  local found = nil
+  if p and me then
+    for _, r in ipairs(p.reminders or {}) do
+      if r.player and strlower(r.player) == strlower(me) then found = r.player; break end
+    end
+  end
+  selPreviewAs = found or "__all__"
+  previewDD:SetValue(selPreviewAs, selPreviewAs == "__all__" and "Everyone" or selPreviewAs)
+end
+
 local function refreshNoteDD()
   local e = selEnc and ns.DB.GetEncounter(selEnc)
   if e and #e.plans > 0 then
@@ -389,6 +423,7 @@ local function refreshNoteDD()
     selNote = nil
     noteDD:SetValue(nil, "—")
   end
+  refreshPreviewDD()
 end
 
 local function resolveSelEnc()
@@ -513,12 +548,18 @@ function Timeline.BuildPage(host)
     end)
   bossDD:SetPoint("TOPLEFT", -8, -54)
 
-  noteDD = ns.Window.MakeDropdown(host, "CoolPlanTLNoteDD", 150, noteItems,
+  noteDD = ns.Window.MakeDropdown(host, "CoolPlanTLNoteDD", 140, noteItems,
     function(idx)
       selNote = idx
+      refreshPreviewDD()
       renderCanvas()
     end)
   noteDD:SetPoint("LEFT", bossDD, "RIGHT", 2, 0)
+
+  -- "Preview as" — which player's reminders the Test plays (Everyone / a player).
+  previewDD = ns.Window.MakeDropdown(host, "CoolPlanTLPreviewDD", 130, previewItems,
+    function(v) selPreviewAs = v end)
+  previewDD:SetPoint("LEFT", noteDD, "RIGHT", 2, 0)
 
   -- Test / Stop button — pin to the host's right edge (row 2) so it follows the
   -- window width and never gets clipped when the shell is narrowed. It sits to
