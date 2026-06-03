@@ -1,0 +1,16 @@
+## Interface: 120000
+## Title: CoolPlan
+## Notes: On-screen / sound / TTS cooldown reminders during boss encounters, from plans exported by coolplan.team.
+## Author: pingping-e
+## Version: 0.1.0
+## SavedVariables: CoolPlanDB
+## X-Website: https://coolplan.team
+
+EncounterNames.lua
+Format.lua
+DB.lua
+Reminders.lua
+Scheduler.lua
+Editor.lua
+Options.lua
+Core.lua
