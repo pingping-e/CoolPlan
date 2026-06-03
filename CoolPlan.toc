@@ -12,6 +12,7 @@ Format.lua
 DB.lua
 Reminders.lua
 Scheduler.lua
+Comm.lua
 Editor.lua
 Manager.lua
 Options.lua

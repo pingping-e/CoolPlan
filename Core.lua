@@ -24,6 +24,7 @@ Core:SetScript("OnEvent", ns.wrap(function(_, event, ...)
     end
   elseif event == "PLAYER_LOGIN" then
     ns.Reminders.Init()
+    ns.Comm.Init()
     out("loaded. /coolplan for options, /coolplan edit to import a plan.")
   elseif event == "ENCOUNTER_START" then
     local encounterID = ...
@@ -52,6 +53,8 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
     ns.Editor.Open()
   elseif cmd == "plans" or cmd == "manager" or cmd == "saved" then
     ns.Manager.Open()
+  elseif cmd == "share" then
+    ns.Comm.ShareActive()
   elseif cmd == "test" then
     ns.Reminders.Test()
   elseif cmd == "demo" then
@@ -90,6 +93,6 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
     end
     if n == 0 then out("no plans imported yet. /coolplan edit to paste one.") end
   else
-    out("commands: options | edit | plans | list | test | demo | move | lock | testenc <id> | stop | errors | debug")
+    out("commands: options | edit | plans | share | list | test | demo | move | lock | testenc <id> | stop | errors | debug")
   end
 end)
