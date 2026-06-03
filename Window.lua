@@ -108,9 +108,12 @@ end
 local function build()
   local o = ns.DB and ns.DB.Options and ns.DB.Options()
   local f = CreateFrame("Frame", "CoolPlanWindow", UIParent, "BackdropTemplate")
-  -- clamp the saved size up to the minimum so the content-heavy Options page
-  -- never opens smaller than it can lay out.
-  f:SetSize(math.max((o and o.windowW) or 860, 760), math.max((o and o.windowH) or 640, 620))
+  -- Size bounds: min so the content-heavy Options page can lay out; max so it
+  -- can never grow past the screen and put the resize grip out of reach.
+  local maxW = math.min(1600, math.max(900, (UIParent:GetWidth() or 1280) - 40))
+  local maxH = math.min(1000, math.max(640, (UIParent:GetHeight() or 800) - 40))
+  local function clampSize(v, lo, hi) return math.min(math.max(v or lo, lo), hi) end
+  f:SetSize(clampSize((o and o.windowW) or 860, 760, maxW), clampSize((o and o.windowH) or 640, 620, maxH))
   f:SetPoint("CENTER")
   f:SetFrameStrata("DIALOG")
   f:SetMovable(true)
@@ -123,8 +126,12 @@ local function build()
   -- resizable from a bottom-right grip; the sidebar/content use anchored points
   -- so they reflow automatically. Size is saved across sessions.
   f:SetResizable(true)
-  if f.SetResizeBounds then f:SetResizeBounds(760, 620)
-  elseif f.SetMinResize then f:SetMinResize(760, 620) end
+  if f.SetResizeBounds then
+    f:SetResizeBounds(760, 620, maxW, maxH)
+  elseif f.SetMinResize then
+    f:SetMinResize(760, 620)
+    if f.SetMaxResize then f:SetMaxResize(maxW, maxH) end
+  end
   local grip = CreateFrame("Button", nil, f)
   grip:SetSize(16, 16)
   grip:SetPoint("BOTTOMRIGHT", -4, 4)

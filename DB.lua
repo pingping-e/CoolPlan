@@ -120,6 +120,12 @@ function DB.Init()
     CoolPlanDB.options.categoryEnabled = {}
     CoolPlanDB._migrCategoryReset = true
   end
+  -- One-time: force the upcoming queue off once more (it should be off by
+  -- default; this clears it for anyone it stayed on for).
+  if not CoolPlanDB._migrShowQueueOff2 then
+    CoolPlanDB.options.showQueue = false
+    CoolPlanDB._migrShowQueueOff2 = true
+  end
   DB.data = CoolPlanDB
   return CoolPlanDB
 end
