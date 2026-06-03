@@ -25,7 +25,8 @@ Core:SetScript("OnEvent", ns.wrap(function(_, event, ...)
   elseif event == "PLAYER_LOGIN" then
     ns.Reminders.Init()
     ns.Comm.Init()
-    out("loaded. /coolplan for options, /coolplan edit to import a plan.")
+    if ns.Minimap then ns.Minimap.Init() end
+    out("loaded. /coolplan to open, /coolplan import to paste a plan.")
   elseif event == "ENCOUNTER_START" then
     local encounterID = ...
     if ns.Scheduler.Start(encounterID) then
@@ -47,12 +48,18 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
   local cmd, rest = msg:match("^(%S*)%s*(.*)$")
   cmd = (cmd or ""):lower()
 
-  if cmd == "" or cmd == "options" or cmd == "config" then
-    ns.Options.Open()
+  if cmd == "" then
+    ns.Window.Open()
+  elseif cmd == "options" or cmd == "config" then
+    ns.Window.Open("options")
   elseif cmd == "edit" or cmd == "import" or cmd == "export" then
-    ns.Editor.Open()
+    ns.Window.Open("import")
   elseif cmd == "plans" or cmd == "manager" or cmd == "saved" then
-    ns.Manager.Open()
+    ns.Window.Open("saved")
+  elseif cmd == "timeline" then
+    ns.Window.Open("timeline")
+  elseif cmd == "minimap" then
+    ns.Minimap.Toggle()
   elseif cmd == "share" then
     ns.Comm.ShareActive()
   elseif cmd == "test" then
@@ -93,6 +100,6 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
     end
     if n == 0 then out("no plans imported yet. /coolplan edit to paste one.") end
   else
-    out("commands: options | edit | plans | share | list | test | demo | move | lock | testenc <id> | stop | errors | debug")
+    out("commands: (blank)=open | timeline | plans | import | options | minimap | share | list | test | demo | move | lock | testenc <id> | stop | errors | debug")
   end
 end)

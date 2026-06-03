@@ -33,6 +33,8 @@ local defaults = {
     categoryEnabled = {},
     hud = { point = "CENTER", relPoint = "CENTER", x = 0, y = 200, locked = true },
     queueAnchor = { point = "CENTER", relPoint = "CENTER", x = 0, y = 60, locked = true },
+    lastPage = "timeline",
+    minimap = { angle = 210, hide = false },
   },
 }
 

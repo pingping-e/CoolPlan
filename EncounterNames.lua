@@ -38,3 +38,36 @@ CoolPlanEncounterNamesKR = {
   [112526] = "도라고사의 메아리",
   [361753] = "르우라",
 }
+
+-- Content groups for the addon navigation (category → encounters).
+-- Mythic+ : one entry per dungeon (keyed to the dungeon's exported encounterId).
+-- Raid    : one entry per resolved boss.
+CoolPlanContent = {
+  {
+    key = "mythicplus", label = "Mythic+",
+    encounters = {
+      { id=112526, name="Algeth'ar Academy", kr="알게타르 대학" },
+      { id=12811, name="Magisters' Terrace", kr="마법학자의 정원" },
+      { id=12874, name="Maisara Caverns", kr="마이사라 동굴" },
+      { id=12915, name="Nexus-Point Xenas", kr="공결탑 제나스" },
+      { id=10658, name="Pit of Saron", kr="샤론의 구덩이" },
+      { id=361753, name="Seat of the Triumvirate", kr="삼두정의 권좌" },
+      { id=61209, name="Skyreach", kr="하늘탑" },
+      { id=12805, name="Windrunner Spire", kr="윈드러너 첨탑" },
+    },
+  },
+  {
+    key = "raid", label = "Raid",
+    encounters = {
+      { id=3176, name="Imperator Averzian", kr="통치자 아베르지안" },
+      { id=3177, name="Vorasius", kr="보라시우스" },
+      { id=3179, name="Fallen-King Salhadaar", kr="몰락한 왕 살라다르" },
+      { id=3178, name="Vaelgor & Ezzorak", kr="바엘고어와 에조라크" },
+      { id=3180, name="Lightblinded Vanguard", kr="빛에 눈이 먼 선봉대" },
+      { id=3181, name="Crown of the Cosmos", kr="우주의 왕관" },
+      { id=3306, name="Chimaerus, the Undreamt God", kr="꿈결을 벗어난 신 카이메루스" },
+      { id=3182, name="Belo'ren, Child of Al'ar", kr="알라르의 자손 벨로렌" },
+      { id=3183, name="Midnight Falls", kr="한밤의 도래" },
+    },
+  },
+}

@@ -1,0 +1,253 @@
+-- Single-window shell with a left navigation sidebar. One movable frame with a
+-- title + close button; the right-hand content host is swapped per page. Pages
+-- are built lazily: the first time a page is opened, its module's
+-- BuildPage(host) is called to attach widgets to the content host, then reused.
+--
+-- Modules register themselves via Window.RegisterPage(key, label, builder). The
+-- builder receives the content host frame and returns nothing (it attaches
+-- widgets to host). A page may expose host._onShow(host) which Window calls
+-- every time the page becomes visible (used for refresh-on-show).
+
+local _, ns = ...
+local Window = {}
+ns.Window = Window
+
+-- ordered page registry: { {key, label, builder, host} ... }
+local pages = {}
+local byKey = {}
+local frame, sidebar, contentArea
+local navButtons = {}
+local current
+
+local NAV_W = 150
+
+-- Modules call this at file-load time (before PLAYER_LOGIN). Order of calls is
+-- the order the tabs appear; the spec order is Timeline · Saved · Import · Options.
+function Window.RegisterPage(key, label, builder)
+  if byKey[key] then
+    byKey[key].label = label
+    byKey[key].builder = builder
+    return
+  end
+  local page = { key = key, label = label, builder = builder, host = nil }
+  pages[#pages + 1] = page
+  byKey[key] = page
+end
+
+-- ── shell construction ───────────────────────────────────────────────────────
+local function buildNav()
+  for _, btn in ipairs(navButtons) do btn:Hide() end
+  wipe(navButtons)
+  for i, page in ipairs(pages) do
+    local btn = CreateFrame("Button", nil, sidebar)
+    btn:SetSize(NAV_W - 12, 26)
+    btn:SetPoint("TOPLEFT", 6, -8 - (i - 1) * 30)
+
+    local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints()
+    hl:SetColorTexture(1, 1, 1, 0.10)
+
+    local sel = btn:CreateTexture(nil, "BACKGROUND")
+    sel:SetAllPoints()
+    sel:SetColorTexture(0.20, 0.45, 0.85, 0.45)
+    sel:Hide()
+    btn.sel = sel
+
+    local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    fs:SetPoint("LEFT", 8, 0)
+    fs:SetText(page.label)
+    btn.fs = fs
+
+    btn.key = page.key
+    btn:SetScript("OnClick", ns.wrap(function() Window.Open(page.key) end))
+    navButtons[i] = btn
+  end
+end
+
+local function highlightNav(key)
+  for _, btn in ipairs(navButtons) do
+    if btn.key == key then
+      btn.sel:Show()
+      btn.fs:SetFontObject(GameFontNormal)
+    else
+      btn.sel:Hide()
+      btn.fs:SetFontObject(GameFontHighlight)
+    end
+  end
+end
+
+local function build()
+  local f = CreateFrame("Frame", "CoolPlanWindow", UIParent, "BackdropTemplate")
+  f:SetSize(720, 520)
+  f:SetPoint("CENTER")
+  f:SetFrameStrata("DIALOG")
+  f:SetMovable(true)
+  f:EnableMouse(true)
+  f:RegisterForDrag("LeftButton")
+  f:SetScript("OnDragStart", f.StartMoving)
+  f:SetScript("OnDragStop", f.StopMovingOrSizing)
+  f:SetClampedToScreen(true)
+  if f.SetBackdrop then
+    f:SetBackdrop({
+      bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+      edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+      tile = true, tileSize = 32, edgeSize = 16,
+      insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+  end
+
+  local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  title:SetPoint("TOP", 0, -14)
+  title:SetText("|cff66b3ffCoolPlan|r")
+  f.title = title
+
+  local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+  close:SetPoint("TOPRIGHT", -4, -4)
+
+  -- left sidebar
+  sidebar = CreateFrame("Frame", nil, f, "BackdropTemplate")
+  sidebar:SetPoint("TOPLEFT", 12, -44)
+  sidebar:SetPoint("BOTTOMLEFT", 12, 14)
+  sidebar:SetWidth(NAV_W)
+  if sidebar.SetBackdrop then
+    sidebar:SetBackdrop({
+      bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+      edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+      tile = true, tileSize = 16, edgeSize = 12,
+      insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+  end
+
+  -- right content host (each page attaches its widgets here)
+  contentArea = CreateFrame("Frame", "CoolPlanWindowContent", f)
+  contentArea:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 10, 0)
+  contentArea:SetPoint("BOTTOMRIGHT", -14, 14)
+
+  return f
+end
+
+-- ── page lifecycle ───────────────────────────────────────────────────────────
+local function ensurePage(page)
+  if page.host then return page.host end
+  -- a per-page host frame parented to the shared content area; all the page's
+  -- widgets live under it so we can show/hide an entire page at once.
+  local host = CreateFrame("Frame", nil, contentArea)
+  host:SetAllPoints(contentArea)
+  host:Hide()
+  page.host = host
+  if page.builder then ns.safecall(page.builder, host) end
+  return host
+end
+
+-- Open the window on a given page (default: last page, else first/Timeline).
+function Window.Open(pageKey)
+  if not frame then
+    frame = build()
+    buildNav()
+  end
+
+  if not pageKey then
+    local o = ns.DB and ns.DB.Options and ns.DB.Options()
+    pageKey = (o and o.lastPage) or (pages[1] and pages[1].key)
+  end
+  local page = byKey[pageKey] or pages[1]
+  if not page then
+    frame:Show()
+    return
+  end
+
+  -- hide the currently shown page host
+  if current and current.host then current.host:Hide() end
+
+  local host = ensurePage(page)
+  host:Show()
+  current = page
+  highlightNav(page.key)
+  frame.title:SetText("|cff66b3ffCoolPlan|r  |cffaaaaaa—  " .. page.label .. "|r")
+
+  local o = ns.DB and ns.DB.Options and ns.DB.Options()
+  if o then o.lastPage = page.key end
+
+  if host._onShow then ns.safecall(host._onShow, host) end
+
+  frame:Show()
+end
+
+function Window.Close()
+  if frame then frame:Hide() end
+end
+
+function Window.Toggle(pageKey)
+  if frame and frame:IsShown() and (not pageKey or (current and current.key == pageKey)) then
+    frame:Hide()
+  else
+    Window.Open(pageKey)
+  end
+end
+
+-- Expose the frame (used by a few helpers / tests).
+function Window.GetFrame() return frame end
+function Window.IsShown() return frame and frame:IsShown() end
+
+-- ── shared content-group helpers (used by Saved/Timeline category dropdowns) ──
+-- CoolPlanContent is emitted by gen-addon-encounter-names.ts. Provide safe
+-- accessors so pages don't each re-derive the grouping.
+function Window.Categories()
+  return CoolPlanContent or {}
+end
+
+function Window.CategoryByKey(key)
+  for _, cat in ipairs(CoolPlanContent or {}) do
+    if cat.key == key then return cat end
+  end
+  return nil
+end
+
+-- Display name for an encounterID: prefer a saved library entry's own name,
+-- then the content/fallback tables, then "Encounter <id>".
+function Window.EncounterName(id)
+  local e = ns.DB and ns.DB.GetEncounter and ns.DB.GetEncounter(id)
+  if e and e.name and e.name ~= "" then return e.name end
+  if CoolPlanEncounterNames and CoolPlanEncounterNames[id] then
+    return CoolPlanEncounterNames[id]
+  end
+  return "Encounter " .. tostring(id)
+end
+
+-- ── reusable UIDropDownMenu wrapper ──────────────────────────────────────────
+-- Creates a dropdown. `getItems()` must return a list of { text=, value=,
+-- (optional) onClick= }. `onSelect(value, text)` fires after a pick. The
+-- caller drives the displayed text via dd:Refresh(value, text).
+function Window.MakeDropdown(parent, name, width, getItems, onSelect)
+  local dd = CreateFrame("Frame", name, parent, "UIDropDownMenuTemplate")
+  dd._value = nil
+
+  local function init(self, level)
+    local items = getItems() or {}
+    for _, it in ipairs(items) do
+      local info = UIDropDownMenu_CreateInfo()
+      info.text = it.text
+      info.value = it.value
+      info.checked = (dd._value == it.value)
+      info.func = ns.wrap(function()
+        dd._value = it.value
+        UIDropDownMenu_SetText(dd, it.text)
+        CloseDropDownMenus()
+        if onSelect then onSelect(it.value, it.text) end
+      end)
+      UIDropDownMenu_AddButton(info, level)
+    end
+  end
+
+  UIDropDownMenu_Initialize(dd, ns.wrap(init))
+  UIDropDownMenu_SetWidth(dd, width or 160)
+  UIDropDownMenu_JustifyText(dd, "LEFT")
+
+  -- programmatically set value + display text without firing onSelect
+  function dd:SetValue(value, text)
+    self._value = value
+    UIDropDownMenu_SetText(self, text or "")
+  end
+
+  return dd
+end

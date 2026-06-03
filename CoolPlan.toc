@@ -13,7 +13,10 @@ DB.lua
 Reminders.lua
 Scheduler.lua
 Comm.lua
-Editor.lua
+Window.lua
+Timeline.lua
 Manager.lua
+Editor.lua
 Options.lua
+Minimap.lua
 Core.lua

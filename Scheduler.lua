@@ -9,6 +9,13 @@ ns.Scheduler = Scheduler
 local LINGER = 1.0
 
 local ticker, pullTime, queue, activeId
+-- preview mode: a virtual clock advanced by `speed`x each real tick, with an
+-- optional onTick(elapsed, total) callback (used by the Timeline playhead).
+local preview = false
+local previewClock = 0
+local previewSpeed = 1
+local previewTotal = 0
+local previewOnTick = nil
 
 local function nameMatchesMe(player)
   if not player or player == "" then return true end
@@ -17,10 +24,18 @@ local function nameMatchesMe(player)
   return strlower(player) == strlower(me)
 end
 
+local function nowElapsed()
+  if preview then return previewClock end
+  if not pullTime then return 0 end
+  return GetTime() - pullTime
+end
+
 local function tick()
-  if not pullTime or not queue then return end
+  if not queue then return end
+  if (not preview) and not pullTime then return end
   local o = ns.DB.Options()
-  local elapsed = GetTime() - pullTime
+  if preview then previewClock = previewClock + 0.1 * previewSpeed end
+  local elapsed = nowElapsed()
   local lead = o.leadSeconds or 4
 
   local active = nil       -- {reminder, remaining, total}
@@ -63,17 +78,28 @@ local function tick()
   while #upcoming > cap do table.remove(upcoming) end
 
   ns.Reminders.RenderTick(active, upcoming, o)
+
+  if preview then
+    if previewOnTick then ns.safecall(previewOnTick, elapsed, previewTotal) end
+    -- auto-stop a short while past the last cast
+    if elapsed > previewTotal + LINGER + 1 then
+      Scheduler.Stop()
+    end
+  end
 end
 
 -- Run an arbitrary cue list (already filtered). Returns true if armed.
-local function run(cues)
+-- opts (optional): { preview=true, speed=1, onTick=fn } for the live preview.
+local function run(cues, opts)
   Scheduler.Stop()
   local o = ns.DB.Options()
   local lead = o.leadSeconds or 4
 
   queue = {}
+  local maxCast = 0
   for _, c in ipairs(cues) do
     local castAt = c.timeMs / 1000
+    if castAt > maxCast then maxCast = castAt end
     queue[#queue + 1] = {
       cue = c,
       castAt = castAt,
@@ -85,7 +111,16 @@ local function run(cues)
   if #queue == 0 then return false end
   table.sort(queue, function(a, b) return a.castAt < b.castAt end)
 
-  pullTime = GetTime()
+  if opts and opts.preview then
+    preview = true
+    previewClock = 0
+    previewSpeed = opts.speed or 1
+    previewTotal = maxCast
+    previewOnTick = opts.onTick
+    pullTime = nil
+  else
+    pullTime = GetTime()
+  end
   ticker = C_Timer.NewTicker(0.1, ns.wrap(tick))
   return true
 end
@@ -144,7 +179,23 @@ end
 function Scheduler.Stop()
   if ticker then ticker:Cancel(); ticker = nil end
   queue, pullTime, activeId = nil, nil, nil
+  preview, previewClock, previewSpeed, previewTotal, previewOnTick = false, 0, 1, 0, nil
   if ns.Reminders then ns.Reminders.Clear() end
+end
+
+-- Live preview of a plan, with no real encounter: virtual clock from 0.
+-- `reminders`/`boss` come from a saved note. `speed` (default 1) accelerates
+-- the virtual clock. `onTick(elapsed, total)` drives the Timeline playhead.
+-- Honors the same filterToMe / category / showBoss options as a real pull.
+function Scheduler.StartPreview(reminders, boss, speed, onTick)
+  local cues = buildCues(reminders or {}, boss)
+  if #cues == 0 then return false end
+  activeId = -2
+  return run(cues, { preview = true, speed = speed or 1, onTick = onTick })
+end
+
+function Scheduler.IsPreview()
+  return preview
 end
 
 function Scheduler.IsActive()

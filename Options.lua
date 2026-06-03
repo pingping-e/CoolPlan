@@ -1,11 +1,10 @@
--- Options window (raw frames, no libs): alert channels, anticipation lead,
+-- Options page (raw frames, no libs): alert channels, anticipation lead,
 -- HUD appearance, sound, TTS, queue, and per-category gating.
+-- Embedded into the Window shell via Options.BuildPage(host).
 
 local _, ns = ...
 local Options = {}
 ns.Options = Options
-
-local frame
 
 local CATEGORIES = {
   { "personal_defensive", "Personal def" },
@@ -27,11 +26,22 @@ local COLORS = {
   { 0.4, 0.8, 1 },   -- cyan
 }
 
+-- Wow built-in SOUNDKIT names (verified to exist). value = SOUNDKIT key.
 local SOUNDS = {
-  { "Raid Warning", "RAID_WARNING" },
-  { "Ready Check",  "READY_CHECK" },
-  { "Alarm",        "ALARM_CLOCK_WARNING_3" },
+  { "Raid Warning",   "RAID_WARNING" },
+  { "Ready Check",    "READY_CHECK" },
+  { "Alarm",          "ALARM_CLOCK_WARNING_3" },
+  { "Boss Whisper",   "UI_RAID_BOSS_WHISPER_WARNING" },
+  { "Boss Emote",     "UI_RAID_BOSS_EMOTE_WARNING" },
+  { "PvP Update",     "IGPVPUPDATE" },
+  { "Map Ping",       "MAP_PING" },
+  { "Auction Open",   "AUCTION_WINDOW_OPEN" },
 }
+
+local function soundLabel(kit)
+  for _, s in ipairs(SOUNDS) do if s[2] == kit then return s[1] end end
+  return kit or "Raid Warning"
+end
 
 local function refresh()
   if ns.Reminders then ns.Reminders.ApplyOptions() end
@@ -93,63 +103,44 @@ local function button(parent, text, w, x, y, onClick)
   return b
 end
 
-local function build()
+-- Attach all the option widgets to the Window's content host.
+function Options.BuildPage(host)
   local o = ns.DB.Options()
 
-  local f = CreateFrame("Frame", "CoolPlanOptions", UIParent, "BackdropTemplate")
-  f:SetSize(560, 500)
-  f:SetPoint("CENTER")
-  f:SetFrameStrata("DIALOG")
-  f:SetMovable(true)
-  f:EnableMouse(true)
-  f:RegisterForDrag("LeftButton")
-  f:SetScript("OnDragStart", f.StartMoving)
-  f:SetScript("OnDragStop", f.StopMovingOrSizing)
-  if f.SetBackdrop then
-    f:SetBackdrop({
-      bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-      edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-      tile = true, tileSize = 32, edgeSize = 16,
-      insets = { left = 4, right = 4, top = 4, bottom = 4 },
-    })
-  end
-
-  local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  title:SetPoint("TOP", 0, -14)
-  title:SetText("CoolPlan — Options")
-  local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
-  close:SetPoint("TOPRIGHT", -4, -4)
-
   -- ── left column: alerts + lead ──
-  local LX = 22
-  header(f, "Alerts", LX, -40)
-  checkbox(f, "On-screen text", LX, -60, function() return o.textEnabled end, function(v) o.textEnabled = v end)
-  checkbox(f, "Sound", LX, -84, function() return o.soundEnabled end, function(v) o.soundEnabled = v end)
-  checkbox(f, "Text-to-speech (TTS)", LX, -108, function() return o.ttsEnabled end, function(v) o.ttsEnabled = v end)
-  checkbox(f, "TTS count down (3..2..1)", LX + 16, -132, function() return o.ttsCountdown end, function(v) o.ttsCountdown = v end)
-  checkbox(f, "Only my character", LX, -156, function() return o.filterToMe end, function(v) o.filterToMe = v end)
+  local LX = 10
+  header(host, "Alerts", LX, -6)
+  checkbox(host, "On-screen text", LX, -26, function() return o.textEnabled end, function(v) o.textEnabled = v end)
+  checkbox(host, "Sound", LX, -50, function() return o.soundEnabled end, function(v) o.soundEnabled = v end)
+  checkbox(host, "Text-to-speech (TTS)", LX, -74, function() return o.ttsEnabled end, function(v) o.ttsEnabled = v end)
+  checkbox(host, "TTS count down (3..2..1)", LX + 16, -98, function() return o.ttsCountdown end, function(v) o.ttsCountdown = v end)
+  checkbox(host, "Only my character", LX, -122, function() return o.filterToMe end, function(v) o.filterToMe = v end)
 
-  slider(f, "Lead time (s)", LX, -188, 0, 10, 1, function() return o.leadSeconds or 4 end, function(v) o.leadSeconds = v end)
+  slider(host, "Lead time (s)", LX, -154, 0, 10, 1, function() return o.leadSeconds or 4 end, function(v) o.leadSeconds = v end)
 
-  header(f, "Sound cue", LX, -238)
-  local sx = LX
-  for _, s in ipairs(SOUNDS) do
-    local name, kit = s[1], s[2]
-    local w = 86
-    button(f, name, w, sx, -258, function()
+  -- ── sound cue dropdown ──
+  header(host, "Sound cue", LX, -204)
+  local sndDD = ns.Window.MakeDropdown(host, "CoolPlanOptSoundDD", 160,
+    function()
+      local items = {}
+      for _, s in ipairs(SOUNDS) do items[#items + 1] = { text = s[1], value = s[2] } end
+      return items
+    end,
+    function(kit)
       o.soundKit = kit
       o.customSound = ""
       local k = SOUNDKIT and SOUNDKIT[kit]
       if k then PlaySound(k, "Master") end
     end)
-    sx = sx + w + 4
-  end
-  local csLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  csLabel:SetPoint("TOPLEFT", LX, -288)
+  sndDD:SetPoint("TOPLEFT", LX - 8, -222)
+  sndDD:SetValue(o.soundKit or "RAID_WARNING", soundLabel(o.soundKit))
+
+  local csLabel = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  csLabel:SetPoint("TOPLEFT", LX, -256)
   csLabel:SetText("Custom sound file (overrides above):")
-  local cs = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+  local cs = CreateFrame("EditBox", nil, host, "InputBoxTemplate")
   cs:SetSize(244, 20)
-  cs:SetPoint("TOPLEFT", LX + 4, -304)
+  cs:SetPoint("TOPLEFT", LX + 4, -272)
   cs:SetAutoFocus(false)
   cs:SetText(o.customSound or "")
   cs:SetScript("OnEnterPressed", ns.wrap(function(self)
@@ -158,10 +149,10 @@ local function build()
     if o.customSound ~= "" then PlaySoundFile(o.customSound, "Master") end
   end))
 
-  local voiceLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  voiceLabel:SetPoint("TOPLEFT", LX, -332)
+  local voiceLabel = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  voiceLabel:SetPoint("TOPLEFT", LX, -300)
   voiceLabel:SetText("TTS voice id:")
-  local voice = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+  local voice = CreateFrame("EditBox", nil, host, "InputBoxTemplate")
   voice:SetSize(50, 20)
   voice:SetPoint("LEFT", voiceLabel, "RIGHT", 8, 0)
   voice:SetAutoFocus(false)
@@ -174,20 +165,20 @@ local function build()
 
   -- ── right column: HUD + queue ──
   local RX = 300
-  header(f, "HUD", RX, -40)
-  slider(f, "Scale (%)", RX, -60, 50, 200, 5,
+  header(host, "HUD", RX, -6)
+  slider(host, "Scale (%)", RX, -26, 50, 200, 5,
     function() return math.floor((o.scale or 1) * 100) end,
     function(v) o.scale = v / 100 end)
-  slider(f, "Font size", RX, -108, 12, 48, 1, function() return o.fontSize or 28 end, function(v) o.fontSize = v end)
+  slider(host, "Font size", RX, -74, 12, 48, 1, function() return o.fontSize or 28 end, function(v) o.fontSize = v end)
 
-  local colorLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  colorLabel:SetPoint("TOPLEFT", RX, -156)
+  local colorLabel = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  colorLabel:SetPoint("TOPLEFT", RX, -122)
   colorLabel:SetText("Text color:")
   local cx = RX
   for _, col in ipairs(COLORS) do
-    local sw = CreateFrame("Button", nil, f)
+    local sw = CreateFrame("Button", nil, host)
     sw:SetSize(22, 22)
-    sw:SetPoint("TOPLEFT", cx, -172)
+    sw:SetPoint("TOPLEFT", cx, -138)
     local tex = sw:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints()
     tex:SetColorTexture(col[1], col[2], col[3])
@@ -198,40 +189,38 @@ local function build()
     cx = cx + 26
   end
 
-  header(f, "Upcoming queue", RX, -204)
-  checkbox(f, "Show queue", RX, -224, function() return o.showQueue end, function(v) o.showQueue = v end)
-  slider(f, "Queue size", RX, -252, 1, 6, 1, function() return o.queueCount or 3 end, function(v) o.queueCount = v end)
-  checkbox(f, "Show boss mechanics", RX, -284, function() return o.showBoss end, function(v) o.showBoss = v end)
+  header(host, "Upcoming queue", RX, -170)
+  checkbox(host, "Show queue", RX, -190, function() return o.showQueue end, function(v) o.showQueue = v end)
+  slider(host, "Queue size", RX, -218, 1, 6, 1, function() return o.queueCount or 3 end, function(v) o.queueCount = v end)
+  checkbox(host, "Show boss mechanics", RX, -250, function() return o.showBoss end, function(v) o.showBoss = v end)
 
-  header(f, "Position", RX, -316)
-  button(f, "Move frames", 110, RX, -336, function() ns.Reminders.ToggleMover() end)
-  button(f, "Lock", 60, RX + 116, -336, function() ns.Reminders.SetLocked(true) end)
+  header(host, "Position", RX, -282)
+  button(host, "Move frames", 110, RX, -302, function() ns.Reminders.ToggleMover() end)
+  button(host, "Lock", 60, RX + 116, -302, function() ns.Reminders.SetLocked(true) end)
 
   -- ── categories ──
-  header(f, "Show categories", LX, -362)
-  local gx, gy, col = LX, -382, 0
+  header(host, "Show categories", LX, -332)
+  local gx, gy, col = LX, -352, 0
   for _, c in ipairs(CATEGORIES) do
     local key = c[1]
-    checkbox(f, c[2], gx, gy,
+    checkbox(host, c[2], gx, gy,
       function() return ns.DB.CategoryEnabled(key) end,
       function(v) o.categoryEnabled[key] = v and nil or false end)
     col = col + 1
     if col % 3 == 0 then gx = LX; gy = gy - 24 else gx = gx + 175 end
   end
 
-  -- ── bottom buttons ──
-  button(f, "Test alert", 100, LX, -468, function() ns.Reminders.Test() end)
-  button(f, "Demo countdown", 130, LX + 106, -468, function()
+  -- ── bottom buttons (no Saved Plans / Import — the sidebar replaces them) ──
+  button(host, "Test alert", 100, LX, -440, function() ns.Reminders.Test() end)
+  button(host, "Demo countdown", 130, LX + 106, -440, function()
     if not ns.Scheduler.StartDemo() then ns.Print("demo failed.") end
   end)
-  button(f, "Stop", 60, LX + 242, -468, function() ns.Scheduler.Stop() end)
-  button(f, "Saved Plans", 110, RX - 20, -468, function() ns.Manager.Open() end)
-  button(f, "Import…", 96, RX + 96, -468, function() ns.Editor.Open() end)
-
-  return f
+  button(host, "Stop", 60, LX + 242, -440, function() ns.Scheduler.Stop() end)
 end
 
+-- Back-compat: other code (and slash) call Options.Open() → open the shell page.
 function Options.Open()
-  if not frame then frame = build() end
-  frame:Show()
+  ns.Window.Open("options")
 end
+
+ns.Window.RegisterPage("options", "Options", Options.BuildPage)
