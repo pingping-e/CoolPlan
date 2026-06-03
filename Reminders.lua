@@ -284,6 +284,33 @@ function Reminders.RenderTick(active, upcoming, o)
   end
 end
 
+-- ── text-to-speech ────────────────────────────────────────────────────────────
+-- Resolve a USABLE voice id. Voice id 0 is not guaranteed to exist on every
+-- client (different installed TTS voices), and SpeakText silently does nothing
+-- for an unknown voice — that's why "TTS on" only played the warning sound.
+-- Use the configured voice if it still exists, else the first installed one.
+local function ttsVoiceId(o)
+  local want = o and o.ttsVoice
+  if C_VoiceChat and C_VoiceChat.GetTtsVoices then
+    local voices = C_VoiceChat.GetTtsVoices()
+    if voices and #voices > 0 then
+      if want then
+        for _, v in ipairs(voices) do if v.voiceID == want then return want end end
+      end
+      return voices[1].voiceID
+    end
+  end
+  return want or 0
+end
+
+local function speak(text, o)
+  if not (C_VoiceChat and C_VoiceChat.SpeakText and Enum and Enum.VoiceTtsDestination) then return end
+  local rate = (C_TTSSettings and C_TTSSettings.GetSpeechRate and C_TTSSettings.GetSpeechRate()) or 0
+  local volume = (C_TTSSettings and C_TTSSettings.GetSpeechVolume and C_TTSSettings.GetSpeechVolume()) or 100
+  C_VoiceChat.SpeakText(ttsVoiceId(o), text, Enum.VoiceTtsDestination.QueuedLocalPlayback, rate, volume)
+end
+ns.Reminders._speak = speak
+
 -- ── discrete cues (called once when an alert appears) ──────────────────────────
 function Reminders.Cue(reminder, o)
   if o.soundEnabled then
@@ -294,16 +321,13 @@ function Reminders.Cue(reminder, o)
       if kit then PlaySound(kit, "Master") end
     end
   end
-  if o.ttsEnabled and (not o.ttsCountdown) and C_VoiceChat and C_VoiceChat.SpeakText
-     and Enum and Enum.VoiceTtsDestination then
-    C_VoiceChat.SpeakText(o.ttsVoice or 0, labelFor(reminder), Enum.VoiceTtsDestination.LocalPlayback, 0, 100)
+  if o.ttsEnabled and (not o.ttsCountdown) then
+    speak(labelFor(reminder), o)
   end
 end
 
 function Reminders.SpeakCount(n, o)
-  if o.ttsEnabled and C_VoiceChat and C_VoiceChat.SpeakText and Enum and Enum.VoiceTtsDestination then
-    C_VoiceChat.SpeakText(o.ttsVoice or 0, tostring(n), Enum.VoiceTtsDestination.LocalPlayback, 0, 100)
-  end
+  if o.ttsEnabled then speak(tostring(n), o) end
 end
 
 function Reminders.Clear()
@@ -319,6 +343,12 @@ function Reminders.Test()
   local o = ns.DB.Options()
   local cue = { kind = "cd", spellId = 740, alert = "CoolPlan test" }
   Reminders.Cue(cue, o)
+  -- Cue only speaks when ttsCountdown is off; force a spoken sample on Test so
+  -- enabling TTS always gives audible feedback (or a clear "no voice" notice).
+  if o.ttsEnabled and o.ttsCountdown then speak("CoolPlan test", o) end
+  if o.ttsEnabled and not (C_VoiceChat and C_VoiceChat.SpeakText) then
+    ns.Print("|cffffcc00TTS unavailable on this client (C_VoiceChat.SpeakText missing).|r")
+  end
   Reminders.RenderTick({ cue = cue, remaining = 0, total = o.leadSeconds }, nil, o)
   C_Timer.After(1.5, function() Reminders.Clear() end)
 end

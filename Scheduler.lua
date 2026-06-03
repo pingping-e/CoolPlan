@@ -125,14 +125,21 @@ local function run(cues, opts)
   return true
 end
 
+-- Categories shown to EVERYONE regardless of "only me": raid-wide defensives
+-- and healer cooldowns (공생기 & 힐러 쿨기) are group-relevant, so a player
+-- should see them even when they belong to someone else. Everything else is
+-- filtered to the local character when filterToMe is on.
+local ALWAYS_SHOWN = { raid_defensive = true }
+
 -- Build the combined cue list:
---  • cooldowns (kind="cd")  — filtered by "only me" + enabled categories
---  • boss mechanics (kind="boss") — always (no player/category filter)
+--  • cooldowns (kind="cd")  — raid_defensive shown to all; others "only me" + enabled categories
+--  • boss mechanics (kind="boss") — only when showBoss (off by default; kept out of alerts)
 local function buildCues(reminders, boss)
   local o = ns.DB.Options()
   local cues = {}
   for _, r in ipairs(reminders or {}) do
-    local meOk = (not o.filterToMe) or nameMatchesMe(r.player)
+    local common = ALWAYS_SHOWN[r.category or ""]
+    local meOk = common or (not o.filterToMe) or nameMatchesMe(r.player)
     if meOk and ns.DB.CategoryEnabled(r.category) then
       cues[#cues + 1] = {
         kind = "cd", timeMs = r.timeMs, spellId = r.spellId,

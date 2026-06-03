@@ -24,7 +24,7 @@ local defaults = {
     ttsVoice = 0,
     soundKit = "RAID_WARNING",
     customSound = "",
-    showBoss = true,
+    showBoss = false, -- boss mechanics kept OUT of on-screen alerts by default
     scale = 1.0,
     fontSize = 28,
     textColor = { r = 1, g = 0.95, b = 0.4 },
