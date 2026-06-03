@@ -294,7 +294,9 @@ local function ttsVoiceId(o)
   if C_VoiceChat and C_VoiceChat.GetTtsVoices then
     local voices = C_VoiceChat.GetTtsVoices()
     if voices and #voices > 0 then
-      if want then
+      -- ttsVoice == 0 is the UNSET default, not a deliberate pick — so use the
+      -- first actually-installed voice. Only honor an explicit non-zero choice.
+      if want and want ~= 0 then
         for _, v in ipairs(voices) do if v.voiceID == want then return want end end
       end
       return voices[1].voiceID
@@ -305,9 +307,8 @@ end
 
 local function speak(text, o)
   if not (C_VoiceChat and C_VoiceChat.SpeakText and Enum and Enum.VoiceTtsDestination) then return end
-  local rate = (C_TTSSettings and C_TTSSettings.GetSpeechRate and C_TTSSettings.GetSpeechRate()) or 0
-  local volume = (C_TTSSettings and C_TTSSettings.GetSpeechVolume and C_TTSSettings.GetSpeechVolume()) or 100
-  C_VoiceChat.SpeakText(ttsVoiceId(o), text, Enum.VoiceTtsDestination.QueuedLocalPlayback, rate, volume)
+  -- volume 100 / rate 0 are the safe, audible defaults (settings can be 0/muted).
+  C_VoiceChat.SpeakText(ttsVoiceId(o), text, Enum.VoiceTtsDestination.LocalPlayback, 0, 100)
 end
 ns.Reminders._speak = speak
 
@@ -346,17 +347,20 @@ function Reminders.Test()
   -- Cue only speaks when ttsCountdown is off; force a spoken sample on Test so
   -- enabling TTS always gives audible feedback.
   if o.ttsEnabled and o.ttsCountdown then speak("CoolPlan test", o) end
-  -- TTS diagnostic so we can see WHY it's silent (API missing vs. no voices).
+  -- TTS diagnostic: list the installed voices + the one we use, so a silent TTS
+  -- is explained (api missing / no voices / wrong output device).
   if o.ttsEnabled then
-    local nVoices = 0
-    if C_VoiceChat and C_VoiceChat.GetTtsVoices then
-      local v = C_VoiceChat.GetTtsVoices(); nVoices = (v and #v) or 0
-    end
+    local voices = (C_VoiceChat and C_VoiceChat.GetTtsVoices and C_VoiceChat.GetTtsVoices()) or {}
     local hasApi = (C_VoiceChat and C_VoiceChat.SpeakText) ~= nil
-    ns.Print(("TTS: api=%s, voices=%d, voiceId=%s%s"):format(
-      tostring(hasApi), nVoices, tostring(ttsVoiceId(o)),
-      (not hasApi) and " |cffff6666(client has no TTS API)|r"
-        or (nVoices == 0 and " |cffff6666(no voices — add one in Windows Speech settings, then /reload)|r" or "")))
+    ns.Print(("TTS: api=%s, voices=%d, using id=%s"):format(tostring(hasApi), #voices, tostring(ttsVoiceId(o))))
+    for _, v in ipairs(voices) do
+      ns.Print(("   id=%s  %s"):format(tostring(v.voiceID), tostring(v.name)))
+    end
+    if #voices == 0 then
+      ns.Print("|cffff6666no TTS voices — add one in Windows Speech settings, then /reload|r")
+    elseif hasApi then
+      ns.Print("|cff888888if still silent: Esc > Options > Voice Chat — TTS plays through the voice-chat OUTPUT device.|r")
+    end
   end
   Reminders.RenderTick({ cue = cue, remaining = 0, total = o.leadSeconds }, nil, o)
   C_Timer.After(1.5, function() Reminders.Clear() end)

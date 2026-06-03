@@ -16,10 +16,14 @@ local BOSS_ROW_H = 26
 local ICON = 20
 
 local page, catDD, grpDD, bossDD, noteDD, testBtn, status
-local scroll, canvas, playhead
+local scroll, canvas, playhead, hbar
 local markerPool = {}          -- reusable icon markers
 local rowPool = {}             -- reusable per-track background rows
 local labelPool = {}
+local linePool = {}            -- vertical gridlines (30s ticks + boss abilities)
+local axisPool = {}            -- time-axis labels (every 30s)
+
+local AXIS_H = 16              -- top strip for the time axis
 
 local selCat = "mythicplus"
 local selGrp = 1               -- index into the category's groups
@@ -41,6 +45,31 @@ local function spellIcon(spellId)
   return nil
 end
 
+local function spellNameOf(spellId)
+  if C_Spell and C_Spell.GetSpellInfo then
+    local info = C_Spell.GetSpellInfo(spellId)
+    if info and info.name then return info.name end
+  end
+  if _G.GetSpellInfo then local n = _G.GetSpellInfo(spellId); if n then return n end end
+  return nil
+end
+
+local function getLine(i)
+  if linePool[i] then return linePool[i] end
+  local t = canvas:CreateTexture(nil, "ARTWORK")
+  t:SetWidth(1)
+  linePool[i] = t
+  return t
+end
+
+local function getAxis(i)
+  if axisPool[i] then return axisPool[i] end
+  local fs = canvas:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  fs:SetJustifyH("CENTER")
+  axisPool[i] = fs
+  return fs
+end
+
 -- ── pools ────────────────────────────────────────────────────────────────────
 local function getMarker(i)
   if markerPool[i] then return markerPool[i] end
@@ -52,6 +81,15 @@ local function getMarker(i)
   m.dot = m:CreateTexture(nil, "ARTWORK")
   m.dot:SetAllPoints()
   m.dot:SetColorTexture(0.4, 0.7, 1, 0.9)
+  -- hover = time + spell name
+  m:EnableMouse(true)
+  m:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine(self._name or ("Spell " .. tostring(self._spellId or "?")))
+    GameTooltip:AddLine(ns.Format.FormatTime(self._time or 0), 0.8, 0.8, 0.8)
+    GameTooltip:Show()
+  end)
+  m:SetScript("OnLeave", function() GameTooltip:Hide() end)
   markerPool[i] = m
   return m
 end
@@ -116,7 +154,7 @@ local function renderCanvas()
   local labelIndex = 0
   local rowIndex = 0
 
-  local function placeMarker(spellId, timeMs, rowTop, isBoss, bossType)
+  local function placeMarker(spellId, timeMs, rowTop, isBoss, nameHint)
     markerIndex = markerIndex + 1
     local m = getMarker(markerIndex)
     m:ClearAllPoints()
@@ -130,10 +168,14 @@ local function renderCanvas()
       if isBoss then m.dot:SetColorTexture(1, 0.3, 0.25, 0.95)
       else m.dot:SetColorTexture(0.4, 0.7, 1, 0.95) end
     end
+    m._time = timeMs
+    m._spellId = spellId
+    m._name = (nameHint and nameHint ~= "" and nameHint) or spellNameOf(spellId)
     m:Show()
   end
 
-  local y = -4
+  -- content starts below the top time-axis strip
+  local y = -AXIS_H - 4
 
   -- boss track (top, red)
   if #boss > 0 then
@@ -154,7 +196,7 @@ local function renderCanvas()
     lbl:Show()
 
     for _, b in ipairs(boss) do
-      placeMarker(b.spellId, b.timeMs, y - 3, true, b.type)
+      placeMarker(b.spellId, b.timeMs, y - 3, true, b.spellName)
     end
     y = y - BOSS_ROW_H - 2
   end
@@ -179,25 +221,61 @@ local function renderCanvas()
     lbl:Show()
 
     for _, r in ipairs(byPlayer[pl]) do
-      placeMarker(r.spellId, r.timeMs, y - 3, false)
+      placeMarker(r.spellId, r.timeMs, y - 3, false, r.spellName)
     end
     y = y - ROW_H - 2
   end
 
+  -- ── 30s time axis (top) + vertical gridlines (boss abilities in red) ──
+  local gridTop, gridBottom = -AXIS_H, y + 2
+  local lineIndex, axisIndex = 0, 0
+  local function vline(timeMs, isBoss)
+    lineIndex = lineIndex + 1
+    local t = getLine(lineIndex)
+    t:ClearAllPoints()
+    local x = LABEL_W + (timeMs / 1000) * PX_PER_SEC
+    t:SetPoint("TOPLEFT", canvas, "TOPLEFT", x, gridTop)
+    t:SetPoint("BOTTOMLEFT", canvas, "TOPLEFT", x, gridBottom)
+    if isBoss then t:SetColorTexture(1, 0.3, 0.25, 0.5) else t:SetColorTexture(1, 1, 1, 0.10) end
+    t:Show()
+  end
+  local sec = 0
+  while sec <= totalSec do
+    vline(sec * 1000, false)
+    axisIndex = axisIndex + 1
+    local a = getAxis(axisIndex)
+    a:ClearAllPoints()
+    a:SetPoint("TOP", canvas, "TOPLEFT", LABEL_W + sec * PX_PER_SEC, -2)
+    a:SetText((ns.Format.FormatTime(sec * 1000):gsub("%.%d$", "")))
+    a:Show()
+    sec = sec + 30
+  end
+  for _, b in ipairs(boss) do vline(b.timeMs, true) end
+
   hideFrom(markerPool, markerIndex, "marker")
   hideFrom(rowPool, rowIndex, "tex")
   hideFrom(labelPool, labelIndex, "label")
+  hideFrom(linePool, lineIndex, "tex")
+  hideFrom(axisPool, axisIndex, "label")
 
   local h = math.abs(y) + 8
   canvas:SetHeight(math.max(h, 60))
   canvas._totalSec = totalSec
-  canvas._height = h
+  canvas._height = math.abs(gridBottom) + 4
+  canvas._gridTop = gridTop
 
   -- park playhead at the start, hidden until Test runs
   playhead:ClearAllPoints()
-  playhead:SetPoint("TOPLEFT", canvas, "TOPLEFT", LABEL_W, 0)
-  playhead:SetHeight(h)
+  playhead:SetPoint("TOPLEFT", canvas, "TOPLEFT", LABEL_W, gridTop)
+  playhead:SetHeight(canvas._height)
   playhead:Hide()
+
+  -- keep the bottom horizontal scrollbar range in sync with the canvas width
+  if hbar then
+    local maxx = math.max(0, (canvas:GetWidth() or 0) - (scroll:GetWidth() or 0))
+    hbar:SetMinMaxValues(0, maxx)
+    if hbar:GetValue() > maxx then hbar:SetValue(maxx) end
+  end
 
   if scroll.UpdateScrollChildRect then scroll:UpdateScrollChildRect() end
 end
@@ -205,7 +283,7 @@ end
 local function setPlayhead(elapsed)
   local x = LABEL_W + (elapsed or 0) * PX_PER_SEC
   playhead:ClearAllPoints()
-  playhead:SetPoint("TOPLEFT", canvas, "TOPLEFT", x, 0)
+  playhead:SetPoint("TOPLEFT", canvas, "TOPLEFT", x, canvas._gridTop or -AXIS_H)
   playhead:SetHeight(canvas._height or 60)
   playhead:Show()
 end
@@ -413,22 +491,43 @@ function Timeline.BuildPage(host)
   status = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   status:SetPoint("TOPLEFT", 8, -84)
 
-  -- scrollable canvas
+  -- scrollable canvas (leave room at the bottom for the horizontal scrollbar)
   scroll = CreateFrame("ScrollFrame", "CoolPlanTimelineScroll", host, "UIPanelScrollFrameTemplate")
   scroll:SetPoint("TOPLEFT", 8, -102)
-  scroll:SetPoint("BOTTOMRIGHT", -28, 12)
+  scroll:SetPoint("BOTTOMRIGHT", -28, 30)
 
   canvas = CreateFrame("Frame", "CoolPlanTimelineCanvas", scroll)
   canvas:SetSize(600, 60)
   scroll:SetScrollChild(canvas)
 
-  -- horizontal pan with Shift+wheel (the timeline is usually far wider than the
-  -- view); plain wheel scrolls vertically.
+  -- bottom horizontal scrollbar (like the vertical one) — drag to pan ◀ ▶
+  hbar = CreateFrame("Slider", "CoolPlanTimelineHBar", host, "OptionsSliderTemplate")
+  hbar:SetOrientation("HORIZONTAL")
+  hbar:SetHeight(16)
+  hbar:SetPoint("BOTTOMLEFT", 12, 6)
+  hbar:SetPoint("BOTTOMRIGHT", -28, 6)
+  hbar:SetMinMaxValues(0, 0)
+  hbar:SetValue(0)
+  hbar:SetValueStep(1)
+  hbar:SetObeyStepOnDrag(true)
+  do
+    local hn = hbar:GetName()
+    if _G[hn .. "Low"] then _G[hn .. "Low"]:SetText("") end
+    if _G[hn .. "High"] then _G[hn .. "High"]:SetText("") end
+    if _G[hn .. "Text"] then _G[hn .. "Text"]:SetText("") end
+  end
+  hbar:SetScript("OnValueChanged", ns.wrap(function(self, val)
+    if scroll then scroll:SetHorizontalScroll(val) end
+  end))
+
+  -- Shift+wheel drives the same horizontal scrollbar; plain wheel = vertical.
   scroll:EnableMouseWheel(true)
   scroll:SetScript("OnMouseWheel", ns.wrap(function(self, delta)
     if IsShiftKeyDown and IsShiftKeyDown() then
-      local maxx = math.max(0, (canvas:GetWidth() or 0) - self:GetWidth())
-      self:SetHorizontalScroll(math.min(maxx, math.max(0, self:GetHorizontalScroll() - delta * 80)))
+      if hbar then
+        local _, mx = hbar:GetMinMaxValues()
+        hbar:SetValue(math.min(mx or 0, math.max(0, hbar:GetValue() - delta * 80)))
+      end
     else
       local maxy = math.max(0, (canvas:GetHeight() or 0) - self:GetHeight())
       self:SetVerticalScroll(math.min(maxy, math.max(0, self:GetVerticalScroll() - delta * 30)))

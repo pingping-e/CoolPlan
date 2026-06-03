@@ -236,12 +236,21 @@ end
 -- library. Returns nil when no saved entry exists for this boss (the boss can
 -- still be selected; the page shows an empty state).
 function Window.ResolveBossId(bossName, fallbackId)
-  if fallbackId and ns.DB and ns.DB.GetEncounter and ns.DB.GetEncounter(fallbackId) then
-    return fallbackId
-  end
+  -- 1) Name match is the reliable key: each imported per-boss plan carries the
+  --    boss's own name. (Prefer this over the catalog id, because a boss-scoped
+  --    M+ export is keyed by the DUNGEON's WCL id — shared across the dungeon's
+  --    bosses — so trusting the catalog id collides them.)
   if bossName and bossName ~= "" and ns.DB and ns.DB.Library then
     for id, entry in pairs(ns.DB.Library() or {}) do
       if entry and entry.name == bossName then return id end
+    end
+  end
+  -- 2) Catalog id only if the saved entry there is actually THIS boss (or has no
+  --    name), so a dungeon-level id never shows one boss's plan under another.
+  if fallbackId and ns.DB and ns.DB.GetEncounter then
+    local e = ns.DB.GetEncounter(fallbackId)
+    if e and (not e.name or e.name == "" or e.name == bossName) then
+      return fallbackId
     end
   end
   return nil
