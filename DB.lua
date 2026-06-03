@@ -16,26 +16,24 @@ local defaults = {
   library = {},
   options = {
     filterToMe = true,
-    leadSeconds = 4,
+    leadSeconds = 4,          -- on-screen anticipation lead (seconds before cast)
+    soundLeadSeconds = 0,     -- sound/TTS lead (seconds before cast) — independent
     textEnabled = true,
-    soundEnabled = true,
-    ttsEnabled = false,
-    ttsCountdown = false,
+    alertSound = "sound",     -- single alert mode: "none" | "sound" | "tts"
     ttsVoice = 0,
     soundKit = "RAID_WARNING",
-    customSound = "",
     showBoss = false, -- boss mechanics kept OUT of on-screen alerts by default
     scale = 1.0,
     fontSize = 28,
     textColor = { r = 1, g = 0.95, b = 0.4 },
-    showQueue = true,
+    showQueue = false,
     queueCount = 3,
     categoryEnabled = {},
     hud = { point = "CENTER", relPoint = "CENTER", x = 0, y = 200, locked = true },
     queueAnchor = { point = "CENTER", relPoint = "CENTER", x = 0, y = 60, locked = true },
     lastPage = "timeline",
     minimap = { angle = 210, hide = false },
-    windowW = 720, windowH = 520,
+    windowW = 860, windowH = 600,
   },
 }
 
@@ -65,12 +63,40 @@ function DB.Init()
     end
     CoolPlanDB.plans = nil
   end
+  -- One-time: derive the new single alert mode from the OLD soundEnabled/
+  -- ttsEnabled checkboxes (run BEFORE deepFill so we read the user's old values,
+  -- not freshly-filled defaults). TTS wins, then explicit sound-off → none.
+  local opt = CoolPlanDB.options
+  if opt and not CoolPlanDB._migrAlertSound then
+    if opt.alertSound == nil then
+      if opt.ttsEnabled then
+        opt.alertSound = "tts"
+      elseif opt.soundEnabled == false then
+        opt.alertSound = "none"
+      else
+        opt.alertSound = "sound"
+      end
+    end
+    -- retire the removed options so stale values can't resurface
+    opt.soundEnabled = nil
+    opt.ttsEnabled = nil
+    opt.ttsCountdown = nil
+    opt.customSound = nil
+    CoolPlanDB._migrAlertSound = true
+  end
+
   deepFill(CoolPlanDB, defaults)
   -- One-time: boss mechanics are now OFF by default in on-screen alerts. Flip an
   -- existing saved 'true' once (users can re-enable via Options afterwards).
   if not CoolPlanDB._migrShowBossOff then
     CoolPlanDB.options.showBoss = false
     CoolPlanDB._migrShowBossOff = true
+  end
+  -- One-time: the upcoming queue is now OFF by default. Flip an existing saved
+  -- 'true' once (users can re-enable via Options afterwards).
+  if not CoolPlanDB._migrShowQueueOff then
+    CoolPlanDB.options.showQueue = false
+    CoolPlanDB._migrShowQueueOff = true
   end
   DB.data = CoolPlanDB
   return CoolPlanDB

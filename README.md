@@ -69,12 +69,16 @@ cooldowns with their countdowns.
 
 ### Options (`/coolplan`)
 
-- **On-screen text / Sound / TTS** — toggle each alert channel independently.
-  - **TTS count down** — speak `3.. 2.. 1..` each second instead of announcing once.
+- **On-screen text** — toggle the anticipation HUD on/off.
+- **Alert sound mode** — pick one audible channel: **None** (screen only),
+  **Sound**, or **Text-to-speech**.
+  - **Sound cue** — when in Sound mode, pick a built-in sound kit.
+  - **TTS voice** — when in TTS mode, pick from the voices installed on your PC.
 - **Only my character** — filter to casts by your character (on by default). Off
   = show the whole team's plan.
-- **Lead time** — how many seconds before the cast the alert appears (default 4s).
-- **Sound cue** — pick a built-in sound, or set a **custom sound file** path.
+- **On-screen lead** — how many seconds before the cast the HUD appears (default 4s).
+- **Sound/TTS lead** — how many seconds before the cast the sound/voice fires
+  (default 0s), independent of the on-screen lead.
 - **HUD** — scale, font size, and text color (presets).
 - **Upcoming queue** — show/hide and how many entries.
 - **Show boss mechanics** — include the boss ability timeline (red `[BOSS]` alerts).

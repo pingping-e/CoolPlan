@@ -331,23 +331,17 @@ local function speak(text, o)
 end
 ns.Reminders._speak = speak
 
--- ── discrete cues (called once when an alert appears) ──────────────────────────
+-- ── discrete cues (fired once when a reminder's sound/TTS lead window opens) ────
+-- A single alert mode picks the audible channel: "sound" plays a sound kit,
+-- "tts" speaks the cooldown name, "none" stays silent (on-screen text only).
 function Reminders.Cue(reminder, o)
-  if o.soundEnabled then
-    if o.customSound and o.customSound ~= "" then
-      PlaySoundFile(o.customSound, "Master")
-    else
-      local kit = SOUNDKIT and SOUNDKIT[o.soundKit or "RAID_WARNING"]
-      if kit then PlaySound(kit, "Master") end
-    end
-  end
-  if o.ttsEnabled and (not o.ttsCountdown) then
+  local mode = o.alertSound or "sound"
+  if mode == "sound" then
+    local kit = SOUNDKIT and SOUNDKIT[o.soundKit or "RAID_WARNING"]
+    if kit then PlaySound(kit, "Master") end
+  elseif mode == "tts" then
     speak(labelFor(reminder), o)
   end
-end
-
-function Reminders.SpeakCount(n, o)
-  if o.ttsEnabled then speak(tostring(n), o) end
 end
 
 function Reminders.Clear()
@@ -363,12 +357,9 @@ function Reminders.Test()
   local o = ns.DB.Options()
   local cue = { kind = "cd", spellId = 740, alert = "CoolPlan test" }
   Reminders.Cue(cue, o)
-  -- Cue only speaks when ttsCountdown is off; force a spoken sample on Test so
-  -- enabling TTS always gives audible feedback.
-  if o.ttsEnabled and o.ttsCountdown then speak("CoolPlan test", o) end
   -- TTS diagnostic: list the installed voices + the one we use, so a silent TTS
   -- is explained (api missing / no voices / wrong output device).
-  if o.ttsEnabled then
+  if o.alertSound == "tts" then
     local voices = (C_VoiceChat and C_VoiceChat.GetTtsVoices and C_VoiceChat.GetTtsVoices()) or {}
     local hasApi = (C_VoiceChat and C_VoiceChat.SpeakText) ~= nil
     ns.Print(("TTS: api=%s, voices=%d, using id=%s"):format(tostring(hasApi), #voices, tostring(ttsVoiceId(o))))

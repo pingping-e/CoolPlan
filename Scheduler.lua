@@ -44,19 +44,11 @@ local function tick()
   for _, item in ipairs(queue) do
     local remaining = item.castAt - elapsed
 
-    -- appear cue (sound + announce) once when the window opens
-    if (not item.cued) and elapsed >= item.showAt then
-      item.cued = true
+    -- audible cue (sound / TTS) fires once when the SOUND lead window opens —
+    -- independent of the on-screen lead so audio can lead/trail the visuals.
+    if (not item.soundCued) and elapsed >= item.soundAt then
+      item.soundCued = true
       ns.Reminders.Cue(item.cue, o)
-    end
-
-    -- per-second TTS countdown
-    if o.ttsEnabled and o.ttsCountdown and elapsed >= item.showAt and remaining > 0 then
-      local sec = math.ceil(remaining)
-      if item.lastCount ~= sec then
-        item.lastCount = sec
-        ns.Reminders.SpeakCount(sec, o)
-      end
     end
 
     if elapsed >= item.showAt and elapsed <= item.castAt + LINGER then
@@ -94,6 +86,7 @@ local function run(cues, opts)
   Scheduler.Stop()
   local o = ns.DB.Options()
   local lead = o.leadSeconds or 4
+  local soundLead = o.soundLeadSeconds or 0
 
   queue = {}
   local maxCast = 0
@@ -103,9 +96,9 @@ local function run(cues, opts)
     queue[#queue + 1] = {
       cue = c,
       castAt = castAt,
-      showAt = math.max(0, castAt - lead),
-      cued = false,
-      lastCount = nil,
+      showAt = math.max(0, castAt - lead),      -- on-screen anticipation window
+      soundAt = math.max(0, castAt - soundLead), -- audible cue trigger
+      soundCued = false,
     }
   end
   if #queue == 0 then return false end
