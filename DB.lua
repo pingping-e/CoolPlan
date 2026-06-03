@@ -25,6 +25,8 @@ local defaults = {
     showBoss = false, -- boss mechanics kept OUT of on-screen alerts by default
     scale = 1.0,
     fontSize = 28,
+    hudStyle = "iconName",    -- "icon" | "iconName" | "bar"
+    timePos = "icon",         -- "icon" (inside icon/bar) | "right" (separate, on the right)
     textColor = { r = 1, g = 0.95, b = 0.4 },
     showQueue = false,
     queueCount = 3,

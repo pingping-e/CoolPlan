@@ -152,6 +152,116 @@ local function ensureFrames()
   end
 end
 
+-- ── HUD layout (style + time position) ────────────────────────────────────────
+-- Re-anchors / shows / hides / sizes the icon, name, count and bar regions for
+-- the chosen hudStyle ("icon" | "iconName" | "bar") and timePos ("icon" |
+-- "right"), then sizes the hud frame to fit. RenderTick only updates VALUES;
+-- this function owns all the Show/Hide + ClearAllPoints + fonts so a hidden
+-- region never resurfaces on the next tick.
+local ICON_SIZE = 52
+local THIN_BAR_H = 5
+local function layoutHud(o)
+  local style = o.hudStyle or "iconName"
+  local tpos = o.timePos or "icon"
+  local size = o.fontSize or 28
+  local c = o.textColor or { r = 1, g = 0.95, b = 0.4 }
+  local fontPath = GameFontNormalHuge:GetFont() -- nil-guarded below
+
+  local icon, name, count, bar = hud.icon, hud.name, hud.count, hud.bar
+  icon:ClearAllPoints(); name:ClearAllPoints(); count:ClearAllPoints(); bar:ClearAllPoints()
+
+  -- count font: big when centered inside the icon/bar, normal when on the right
+  local countSize = (tpos == "icon") and (size + 10) or size
+  if fontPath then
+    if name.SetFont then name:SetFont(fontPath, size, "OUTLINE") end
+    if count.SetFont then count:SetFont(fontPath, countSize, "OUTLINE") end
+  end
+  name:SetTextColor(c.r, c.g, c.b)
+  count:SetTextColor(1, 1, 1)
+
+  local PAD = 6
+
+  if style == "bar" then
+    -- thick horizontal bar with a small square icon on the left, name overlaid
+    -- left, time either inside-right or as a separate right field.
+    local barH = math.max(20, size)
+    local barW = 300
+    icon:SetSize(barH, barH)
+    icon:SetPoint("LEFT", hud, "LEFT", PAD, 0)
+    icon:Show()
+
+    bar:SetPoint("LEFT", icon, "RIGHT", 4, 0)
+    bar:SetSize(barW, barH)
+    bar:Show()
+
+    name:SetPoint("LEFT", bar, "LEFT", 6, 0)
+    name:SetJustifyH("LEFT")
+    name:Show()
+
+    local totalW = PAD + barH + 4 + barW + PAD
+    if tpos == "icon" then
+      count:SetPoint("RIGHT", bar, "RIGHT", -6, 0)
+      count:SetJustifyH("RIGHT")
+    else
+      count:SetPoint("LEFT", bar, "RIGHT", 8, 0)
+      count:SetJustifyH("LEFT")
+      totalW = totalW + 8 + math.max(28, size)
+    end
+    count:Show()
+    hud:SetSize(totalW, barH + 4)
+
+  elseif style == "icon" then
+    -- icon only: 52px icon + a thin depleting bar along its bottom. name hidden.
+    icon:SetSize(ICON_SIZE, ICON_SIZE)
+    icon:SetPoint("LEFT", hud, "LEFT", PAD, 0)
+    icon:Show()
+
+    bar:SetPoint("TOPLEFT", icon, "BOTTOMLEFT", 0, -1)
+    bar:SetSize(ICON_SIZE, THIN_BAR_H)
+    bar:Show()
+
+    name:Hide()
+
+    local totalW = PAD + ICON_SIZE + PAD
+    if tpos == "icon" then
+      count:SetPoint("CENTER", icon, "CENTER", 0, 0)
+      count:SetJustifyH("CENTER")
+    else
+      count:SetPoint("LEFT", icon, "RIGHT", 8, 0)
+      count:SetJustifyH("LEFT")
+      totalW = totalW + 8 + math.max(28, size)
+    end
+    count:Show()
+    hud:SetSize(totalW, ICON_SIZE + THIN_BAR_H + 2)
+
+  else -- "iconName"
+    -- 52px icon on the left, name on the right, a thin depleting bar under the name.
+    icon:SetSize(ICON_SIZE, ICON_SIZE)
+    icon:SetPoint("LEFT", hud, "LEFT", PAD, 0)
+    icon:Show()
+
+    name:SetPoint("TOPLEFT", icon, "TOPRIGHT", 12, -4)
+    name:SetJustifyH("LEFT")
+    name:Show()
+
+    bar:SetPoint("TOPLEFT", name, "BOTTOMLEFT", 0, -4)
+    bar:SetSize(220, THIN_BAR_H)
+    bar:Show()
+
+    local totalW = PAD + ICON_SIZE + 12 + 240 + PAD
+    if tpos == "icon" then
+      count:SetPoint("CENTER", icon, "CENTER", 0, 0)
+      count:SetJustifyH("CENTER")
+    else
+      count:SetPoint("LEFT", name, "RIGHT", 10, 0)
+      count:SetJustifyH("LEFT")
+    end
+    count:Show()
+    hud:SetSize(totalW, ICON_SIZE + 4)
+  end
+end
+ns.Reminders._layoutHud = layoutHud
+
 function Reminders.Init()
   ensureFrames()
   Reminders.ApplyOptions()
@@ -161,17 +271,11 @@ end
 function Reminders.ApplyOptions()
   ensureFrames()
   local o = ns.DB.Options()
-  local fontPath = GameFontNormalHuge:GetFont()
-  local size = o.fontSize or 28
   local c = o.textColor or { r = 1, g = 0.95, b = 0.4 }
 
   hud:SetScale(o.scale or 1)
-  if fontPath then
-    hud.name:SetFont(fontPath, size, "OUTLINE")
-    hud.count:SetFont(fontPath, size + 10, "OUTLINE")
-  end
-  hud.name:SetTextColor(c.r, c.g, c.b)
-  hud.count:SetTextColor(1, 1, 1)
+  -- style/timePos/font ownership lives in layoutHud (anchors + Show/Hide + fonts)
+  layoutHud(o)
   hud.bar:SetStatusBarColor(c.r, c.g, c.b)
   restorePosition(hud, o.hud)
   restorePosition(queue, o.queueAnchor)
@@ -221,6 +325,7 @@ function Reminders.ToggleMover()
     o.queueAnchor.locked = false
     hud:EnableMouse(true)
     queue:EnableMouse(true)
+    layoutHud(o) -- preview matches the current style/timePos
     -- show samples so they can be dragged
     if hud.icon then hud.icon:SetTexture(136235) end -- generic icon
     hud.name:SetText("Cooldown name")
@@ -250,8 +355,10 @@ function Reminders.RenderTick(active, upcoming, o)
     local cue = active.cue
     local isBoss = cue.kind == "boss"
     local _, icon = spellInfo(cue.spellId)
-    if icon then hud.icon:SetTexture(icon); hud.icon:Show() else hud.icon:Hide() end
+    -- icon texture only; layoutHud already decided icon Show/Hide for the style
+    if icon then hud.icon:SetTexture(icon) end
     local c = isBoss and { r = 1, g = 0.45, b = 0.3 } or (o.textColor or { r = 1, g = 0.95, b = 0.4 })
+    -- update name TEXT/color only; layoutHud owns whether name is shown for the style
     hud.name:SetText((isBoss and "|cffff7777[BOSS]|r " or "") .. labelFor(cue))
     hud.name:SetTextColor(c.r, c.g, c.b)
     local total = active.total or (o.leadSeconds or 4)

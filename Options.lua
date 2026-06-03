@@ -121,6 +121,16 @@ function Options.BuildPage(host)
 
   -- forward refs so the alert-mode dropdown can enable/disable the dependent rows
   local sndDD, voiceDD
+  local styleDD, timePosDD
+
+  local function hudStyleLabel(v)
+    if v == "icon" then return "Icon only"
+    elseif v == "bar" then return "Bar"
+    else return "Icon + name" end
+  end
+  local function timePosLabel(v)
+    if v == "right" then return "On the right" else return "In icon/bar" end
+  end
 
   local function syncAlertRows()
     local mode = o.alertSound or "sound"
@@ -229,14 +239,51 @@ function Options.BuildPage(host)
   slider(host, "Font size", RX, -86, 12, 48, 1,
     function() return o.fontSize or 28 end, function(v) o.fontSize = v end)
 
+  -- HUD display style (icon only / icon + name / bar)
+  local styleLabel = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  styleLabel:SetPoint("TOPLEFT", RX, -132)
+  styleLabel:SetText("Display style:")
+  styleDD = ns.Window.MakeDropdown(host, "CoolPlanOptStyleDD", 200,
+    function()
+      return {
+        { text = hudStyleLabel("icon"),     value = "icon" },
+        { text = hudStyleLabel("iconName"), value = "iconName" },
+        { text = hudStyleLabel("bar"),      value = "bar" },
+      }
+    end,
+    function(v)
+      o.hudStyle = v
+      if ns.Reminders then ns.Reminders.ApplyOptions() end
+    end)
+  styleDD:SetPoint("TOPLEFT", RX - 8, -150)
+  styleDD:SetValue(o.hudStyle or "iconName", hudStyleLabel(o.hudStyle))
+
+  -- time (countdown) position (inside the icon/bar / separate on the right)
+  local timePosLbl = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  timePosLbl:SetPoint("TOPLEFT", RX, -188)
+  timePosLbl:SetText("Time position:")
+  timePosDD = ns.Window.MakeDropdown(host, "CoolPlanOptTimePosDD", 200,
+    function()
+      return {
+        { text = timePosLabel("icon"),  value = "icon" },
+        { text = timePosLabel("right"), value = "right" },
+      }
+    end,
+    function(v)
+      o.timePos = v
+      if ns.Reminders then ns.Reminders.ApplyOptions() end
+    end)
+  timePosDD:SetPoint("TOPLEFT", RX - 8, -206)
+  timePosDD:SetValue(o.timePos or "icon", timePosLabel(o.timePos))
+
   local colorLabel = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  colorLabel:SetPoint("TOPLEFT", RX, -140)
+  colorLabel:SetPoint("TOPLEFT", RX, -244)
   colorLabel:SetText("Text color:")
   local cx = RX
   for _, col in ipairs(COLORS) do
     local sw = CreateFrame("Button", nil, host)
     sw:SetSize(22, 22)
-    sw:SetPoint("TOPLEFT", cx, -158)
+    sw:SetPoint("TOPLEFT", cx, -262)
     local tex = sw:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints()
     tex:SetColorTexture(col[1], col[2], col[3])
@@ -249,18 +296,18 @@ function Options.BuildPage(host)
   end
 
   -- ── right column: queue ──
-  header(host, "Upcoming queue", RX, -200)
-  checkbox(host, "Show queue", RX, -224,
+  header(host, "Upcoming queue", RX, -298)
+  checkbox(host, "Show queue", RX, -322,
     function() return o.showQueue end, function(v) o.showQueue = v end)
-  slider(host, "Queue size", RX, -252, 1, 6, 1,
+  slider(host, "Queue size", RX, -350, 1, 6, 1,
     function() return o.queueCount or 3 end, function(v) o.queueCount = v end)
-  checkbox(host, "Show boss mechanics", RX, -306,
+  checkbox(host, "Show boss mechanics", RX, -404,
     function() return o.showBoss end, function(v) o.showBoss = v end)
 
   -- ── right column: position ──
-  header(host, "Position", RX, -340)
-  button(host, "Move frames", 120, RX, -362, function() ns.Reminders.ToggleMover() end)
-  button(host, "Lock", 70, RX + 128, -362, function() ns.Reminders.SetLocked(true) end)
+  header(host, "Position", RX, -438)
+  button(host, "Move frames", 120, RX, -460, function() ns.Reminders.ToggleMover() end)
+  button(host, "Lock", 70, RX + 128, -460, function() ns.Reminders.SetLocked(true) end)
 
   -- ── categories (full width, roomy 3-col grid) ──
   header(host, "Show categories", LX, -404)
@@ -286,6 +333,8 @@ function Options.BuildPage(host)
     ns.Style.Dropdown(modeDD)
     ns.Style.Dropdown(sndDD)
     ns.Style.Dropdown(voiceDD)
+    ns.Style.Dropdown(styleDD)
+    ns.Style.Dropdown(timePosDD)
   end
 
   syncAlertRows()
