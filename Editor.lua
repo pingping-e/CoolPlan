@@ -34,14 +34,19 @@ function Editor.BuildPage(host)
   eb:SetMultiLine(true)
   eb:SetFontObject(ChatFontNormal)
   eb:SetAutoFocus(false)
+  eb:EnableMouse(true)
   eb:SetWidth(560)
-  -- Plans can be many KB; without lifting the caps WoW truncates a long paste
-  -- (the symptom was an imported plan keeping only its [encounter] header).
+  eb:SetHeight(360) -- give the (empty) box a real clickable extent so it can focus
+  -- Plans can be many KB; lift the letter cap so a long paste isn't truncated.
+  -- (Do NOT call SetMaxBytes(0) — it was blocking input on some clients.)
   if eb.SetMaxLetters then eb:SetMaxLetters(0) end
-  if eb.SetMaxBytes then eb:SetMaxBytes(0) end
   eb:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
   eb:SetScript("OnTextChanged", function() sf:UpdateScrollChildRect() end)
   sf:SetScrollChild(eb)
+  -- Clicking anywhere in the scroll area (including empty space below the text)
+  -- focuses the box, so typing / Ctrl-V always lands.
+  sf:EnableMouse(true)
+  sf:SetScript("OnMouseDown", ns.wrap(function() eb:SetFocus() end))
   host.editbox = eb
 
   local status = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
