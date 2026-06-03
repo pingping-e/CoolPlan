@@ -223,6 +223,30 @@ function Window.CategoryByKey(key)
   return nil
 end
 
+-- Groups (dungeons / raid instances) of a category. Each group is
+-- { name=, kr=, bosses = { { id?=, name=, kr= }, ... } }.
+function Window.Groups(catKey)
+  local cat = Window.CategoryByKey(catKey)
+  return (cat and cat.groups) or {}
+end
+
+-- Resolve a boss to its saved-library encounterID. The catalog only carries an
+-- `id` for the dungeon's deepest (resolved) boss; for every other boss the
+-- WCL per-boss id lives only on imported plans, so we match by name against the
+-- library. Returns nil when no saved entry exists for this boss (the boss can
+-- still be selected; the page shows an empty state).
+function Window.ResolveBossId(bossName, fallbackId)
+  if fallbackId and ns.DB and ns.DB.GetEncounter and ns.DB.GetEncounter(fallbackId) then
+    return fallbackId
+  end
+  if bossName and bossName ~= "" and ns.DB and ns.DB.Library then
+    for id, entry in pairs(ns.DB.Library() or {}) do
+      if entry and entry.name == bossName then return id end
+    end
+  end
+  return nil
+end
+
 -- Display name for an encounterID: prefer a saved library entry's own name,
 -- then the content/fallback tables, then "Encounter <id>".
 function Window.EncounterName(id)

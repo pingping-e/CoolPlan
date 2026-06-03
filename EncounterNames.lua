@@ -39,35 +39,78 @@ CoolPlanEncounterNamesKR = {
   [361753] = "르우라",
 }
 
--- Content groups for the addon navigation (category → encounters).
--- Mythic+ : one entry per dungeon (keyed to the dungeon's exported encounterId).
--- Raid    : one entry per resolved boss.
+-- Content groups for the addon navigation (category → group → boss).
+-- Mythic+ : one group per dungeon, bosses = all its bosses (id only when resolved).
+-- Raid    : one group per raid instance, bosses = resolved bosses only.
 CoolPlanContent = {
   {
     key = "mythicplus", label = "Mythic+",
-    encounters = {
-      { id=112526, name="Algeth'ar Academy", kr="알게타르 대학" },
-      { id=12811, name="Magisters' Terrace", kr="마법학자의 정원" },
-      { id=12874, name="Maisara Caverns", kr="마이사라 동굴" },
-      { id=12915, name="Nexus-Point Xenas", kr="공결탑 제나스" },
-      { id=10658, name="Pit of Saron", kr="샤론의 구덩이" },
-      { id=361753, name="Seat of the Triumvirate", kr="삼두정의 권좌" },
-      { id=61209, name="Skyreach", kr="하늘탑" },
-      { id=12805, name="Windrunner Spire", kr="윈드러너 첨탑" },
+    groups = {
+      { name="Algeth'ar Academy", kr="알게타르 대학", bosses = {
+        { name="Vexamus", kr="벡사무스" },
+        { name="Overgrown Ancient", kr="비대해진 고대정령" },
+        { name="Crawth", kr="크로스" },
+        { id=112526, name="Echo of Doragosa", kr="도라고사의 메아리" },
+      } },
+      { name="Magisters' Terrace", kr="마법학자의 정원", bosses = {
+        { name="Arcanotron Custos", kr="비전골렘 쿠스토스" },
+        { name="Seranel Sunlash", kr="사라넬 선래쉬" },
+        { name="Gemellus", kr="제멜루스" },
+        { id=12811, name="Degentrius", kr="디젠트리우스" },
+      } },
+      { name="Maisara Caverns", kr="마이사라 동굴", bosses = {
+        { name="Muro'jin and Nekraxx", kr="무로진과 네크락스" },
+        { name="Vordaza", kr="보르다자" },
+        { id=12874, name="Rak'tul, Vessel of Souls", kr="영혼의 그릇 락툴" },
+      } },
+      { name="Nexus-Point Xenas", kr="공결탑 제나스", bosses = {
+        { name="Chief Corewright Kasreth", kr="수석 핵장인 카스레스" },
+        { name="Corewarden Nysarra", kr="핵감시관 니사라" },
+        { id=12915, name="Lothraxion", kr="로스락시온" },
+      } },
+      { name="Pit of Saron", kr="샤론의 구덩이", bosses = {
+        { name="Forgemaster Garfrost", kr="제련장인 가프로스트" },
+        { name="Ick and Krick", kr="이크와 크리크" },
+        { id=10658, name="Scourgelord Tyrannus", kr="스컬지군주 티라누스" },
+      } },
+      { name="Seat of the Triumvirate", kr="삼두정의 권좌", bosses = {
+        { name="Zuraal the Ascended", kr="승천자 주라알" },
+        { name="Saprish", kr="사프리쉬" },
+        { name="Viceroy Nezhar", kr="총독 네자르" },
+        { id=361753, name="L'ura", kr="르우라" },
+      } },
+      { name="Skyreach", kr="하늘탑", bosses = {
+        { name="Ranjit", kr="란지트" },
+        { name="Araknath", kr="아라크나스" },
+        { name="Rukhran", kr="루크란" },
+        { id=61209, name="High Sage Viryx", kr="대현자 비릭스" },
+      } },
+      { name="Windrunner Spire", kr="윈드러너 첨탑", bosses = {
+        { name="Emberdawn", kr="잿불여명" },
+        { name="Derelict Duo", kr="버려진 2인조" },
+        { name="Commander Kroluk", kr="지휘관 크롤루크" },
+        { id=12805, name="Restless Heart", kr="잠 못 드는 심장" },
+      } },
     },
   },
   {
     key = "raid", label = "Raid",
-    encounters = {
-      { id=3176, name="Imperator Averzian", kr="통치자 아베르지안" },
-      { id=3177, name="Vorasius", kr="보라시우스" },
-      { id=3179, name="Fallen-King Salhadaar", kr="몰락한 왕 살라다르" },
-      { id=3178, name="Vaelgor & Ezzorak", kr="바엘고어와 에조라크" },
-      { id=3180, name="Lightblinded Vanguard", kr="빛에 눈이 먼 선봉대" },
-      { id=3181, name="Crown of the Cosmos", kr="우주의 왕관" },
-      { id=3306, name="Chimaerus, the Undreamt God", kr="꿈결을 벗어난 신 카이메루스" },
-      { id=3182, name="Belo'ren, Child of Al'ar", kr="알라르의 자손 벨로렌" },
-      { id=3183, name="Midnight Falls", kr="한밤의 도래" },
+    groups = {
+      { name="The Voidspire", kr="공허첨탑", bosses = {
+        { id=3176, name="Imperator Averzian", kr="통치자 아베르지안" },
+        { id=3177, name="Vorasius", kr="보라시우스" },
+        { id=3179, name="Fallen-King Salhadaar", kr="몰락한 왕 살라다르" },
+        { id=3178, name="Vaelgor & Ezzorak", kr="바엘고어와 에조라크" },
+        { id=3180, name="Lightblinded Vanguard", kr="빛에 눈이 먼 선봉대" },
+        { id=3181, name="Crown of the Cosmos", kr="우주의 왕관" },
+      } },
+      { name="The Dreamrift", kr="꿈의 균열", bosses = {
+        { id=3306, name="Chimaerus, the Undreamt God", kr="꿈결을 벗어난 신 카이메루스" },
+      } },
+      { name="March on Quel'Danas", kr="쿠엘다나스 진격로", bosses = {
+        { id=3182, name="Belo'ren, Child of Al'ar", kr="알라르의 자손 벨로렌" },
+        { id=3183, name="Midnight Falls", kr="한밤의 도래" },
+      } },
     },
   },
 }

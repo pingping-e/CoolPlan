@@ -1,7 +1,7 @@
 -- Saved Plans page: a per-dungeon/boss browser of YOUR saved notes.
--- Top: Category dropdown (Mythic+ / Raid) + Encounter dropdown (the dungeons /
--- bosses of that category). Below: the selected encounter's saved boss-timeline
--- row + cooldown plans, each with Use / Rename / Delete / Export / Share.
+-- Top: Category dropdown (Mythic+ / Raid) → Dungeon/Instance dropdown → Boss
+-- dropdown. Below: the selected boss's saved boss-timeline row + cooldown plans,
+-- each with Use / Rename / Delete / Export / Share.
 -- Embedded into the Window shell via Manager.BuildPage(host).
 
 local _, ns = ...
@@ -12,12 +12,14 @@ local ROW_H = 24
 local CONTENT_W = 500
 
 local page, content, empty, header
-local catDD, encDD
+local catDD, grpDD, bossDD
 local rows = {}
 
 -- selection state (persists across page rebuilds within a session)
 local selCat = "mythicplus"
-local selEnc = nil  -- encounterID
+local selGrp = 1     -- index into the category's groups
+local selBoss = 1    -- index into the group's bosses
+local selEnc = nil   -- resolved encounterID for the selected boss (may be nil)
 
 local function tinyBtn(parent, text, w)
   local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
@@ -100,11 +102,19 @@ local function buildItems()
   return items
 end
 
+-- The currently selected boss (from the dropdowns), if any.
+local function currentBoss()
+  local groups = ns.Window.Groups(selCat)
+  local grp = groups[selGrp]
+  return grp and grp.bosses and grp.bosses[selBoss] or nil
+end
+
 function Manager.Refresh()
   if not page then return end
 
-  -- header reflects current selection
-  local name = selEnc and ns.Window.EncounterName(selEnc) or "—"
+  -- header reflects current selection (boss name; resolved or catalog)
+  local boss = currentBoss()
+  local name = (boss and boss.name) or (selEnc and ns.Window.EncounterName(selEnc)) or "—"
   header:SetText("|cffffd200" .. name .. "|r")
 
   local items = buildItems()
@@ -155,35 +165,59 @@ function Manager.Refresh()
   if page.scroll and page.scroll.UpdateScrollChildRect then page.scroll:UpdateScrollChildRect() end
 end
 
--- ── encounter dropdown items (for the selected category) ─────────────────────
-local function encItems()
+-- ── dropdown item providers ──────────────────────────────────────────────────
+-- group (dungeon / instance) dropdown for the selected category
+local function grpItems()
   local items = {}
-  local cat = ns.Window.CategoryByKey(selCat)
-  if cat then
-    for _, enc in ipairs(cat.encounters or {}) do
-      items[#items + 1] = { text = enc.name, value = enc.id }
+  for i, g in ipairs(ns.Window.Groups(selCat)) do
+    items[#items + 1] = { text = g.name, value = i }
+  end
+  return items
+end
+
+-- boss dropdown for the selected group
+local function bossItems()
+  local items = {}
+  local groups = ns.Window.Groups(selCat)
+  local grp = groups[selGrp]
+  if grp then
+    for i, b in ipairs(grp.bosses or {}) do
+      items[#items + 1] = { text = b.name, value = i }
     end
   end
   return items
 end
 
--- Set the encounter dropdown to the first encounter of the current category if
--- the current selection isn't valid for it.
-local function ensureEncSelection()
-  local cat = ns.Window.CategoryByKey(selCat)
-  local list = cat and cat.encounters or {}
-  local valid = false
-  for _, enc in ipairs(list) do if enc.id == selEnc then valid = true; break end end
-  if not valid then
-    selEnc = list[1] and list[1].id or nil
+-- Resolve the selected boss → encounterID via the library (catalog id when
+-- present, else name match).
+local function resolveSelEnc()
+  local boss = currentBoss()
+  selEnc = boss and ns.Window.ResolveBossId(boss.name, boss.id) or nil
+end
+
+-- Clamp the group selection to the current category and refresh the group
+-- dropdown's displayed text.
+local function ensureGrpSelection()
+  local groups = ns.Window.Groups(selCat)
+  if not groups[selGrp] then selGrp = groups[1] and 1 or 1 end
+  if grpDD then
+    local g = groups[selGrp]
+    grpDD:SetValue(g and selGrp or nil, g and g.name or "—")
   end
-  if encDD then
-    if selEnc then
-      encDD:SetValue(selEnc, ns.Window.EncounterName(selEnc))
-    else
-      encDD:SetValue(nil, "—")
-    end
+end
+
+-- Clamp the boss selection to the current group, refresh the boss dropdown's
+-- text, and re-resolve the encounterID.
+local function ensureBossSelection()
+  local groups = ns.Window.Groups(selCat)
+  local grp = groups[selGrp]
+  local bosses = grp and grp.bosses or {}
+  if not bosses[selBoss] then selBoss = bosses[1] and 1 or 1 end
+  local boss = bosses[selBoss]
+  if bossDD then
+    bossDD:SetValue(boss and selBoss or nil, boss and boss.name or "—")
   end
+  resolveSelEnc()
 end
 
 function Manager.BuildPage(host)
@@ -191,10 +225,10 @@ function Manager.BuildPage(host)
 
   local hint = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   hint:SetPoint("TOPLEFT", 8, -6)
-  hint:SetText("Browse your saved notes by dungeon / boss. Use = make active (plays on pull).")
+  hint:SetText("Pick a dungeon / boss to browse its saved notes. Use = make active (plays on pull).")
 
   -- category dropdown
-  catDD = ns.Window.MakeDropdown(host, "CoolPlanMgrCatDD", 120,
+  catDD = ns.Window.MakeDropdown(host, "CoolPlanMgrCatDD", 110,
     function()
       local items = {}
       for _, c in ipairs(ns.Window.Categories()) do
@@ -204,7 +238,10 @@ function Manager.BuildPage(host)
     end,
     function(key)
       selCat = key
-      ensureEncSelection()
+      selGrp = 1
+      selBoss = 1
+      ensureGrpSelection()
+      ensureBossSelection()
       Manager.Refresh()
     end)
   catDD:SetPoint("TOPLEFT", -8, -24)
@@ -213,19 +250,30 @@ function Manager.BuildPage(host)
     if cat then selCat = cat.key; catDD:SetValue(cat.key, cat.label) end
   end
 
-  -- encounter dropdown
-  encDD = ns.Window.MakeDropdown(host, "CoolPlanMgrEncDD", 220, encItems,
-    function(id)
-      selEnc = id
+  -- dungeon / instance dropdown
+  grpDD = ns.Window.MakeDropdown(host, "CoolPlanMgrGrpDD", 180, grpItems,
+    function(idx)
+      selGrp = idx
+      selBoss = 1
+      ensureBossSelection()
       Manager.Refresh()
     end)
-  encDD:SetPoint("LEFT", catDD, "RIGHT", 4, 0)
+  grpDD:SetPoint("LEFT", catDD, "RIGHT", 4, 0)
 
-  -- selected encounter header
+  -- boss dropdown
+  bossDD = ns.Window.MakeDropdown(host, "CoolPlanMgrBossDD", 180, bossItems,
+    function(idx)
+      selBoss = idx
+      resolveSelEnc()
+      Manager.Refresh()
+    end)
+  bossDD:SetPoint("LEFT", grpDD, "RIGHT", 4, 0)
+
+  -- selected boss header
   header = host:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   header:SetPoint("TOPLEFT", 12, -64)
 
-  -- scroll list of saved notes for the selected encounter
+  -- scroll list of saved notes for the selected boss
   local sf = CreateFrame("ScrollFrame", "CoolPlanManagerScroll", host, "UIPanelScrollFrameTemplate")
   sf:SetPoint("TOPLEFT", 8, -90)
   sf:SetPoint("BOTTOMRIGHT", -28, 44)
@@ -238,7 +286,7 @@ function Manager.BuildPage(host)
   empty = host:CreateFontString(nil, "OVERLAY", "GameFontDisableLarge")
   empty:SetPoint("CENTER", sf, "CENTER", 0, 0)
   empty:SetWidth(420)
-  empty:SetText("No saved notes for this encounter.\nAdd one in the Import/Export tab.")
+  empty:SetText("No saved notes for this boss.\nAdd one in the Import/Export tab.")
   empty:Hide()
 
   -- bottom: jump to import + share
@@ -256,10 +304,16 @@ function Manager.BuildPage(host)
     if selEnc then ns.Comm.ShareEncounter(selEnc) else ns.Comm.ShareActive() end
   end))
 
-  ensureEncSelection()
+  ensureGrpSelection()
+  ensureBossSelection()
 
-  -- refresh whenever the page becomes visible
-  host._onShow = function() Manager.Refresh() end
+  -- refresh whenever the page becomes visible (re-resolve in case a new import
+  -- now matches the selected boss by name)
+  host._onShow = function()
+    ensureGrpSelection()
+    ensureBossSelection()
+    Manager.Refresh()
+  end
 end
 
 -- Back-compat for slash / other callers.

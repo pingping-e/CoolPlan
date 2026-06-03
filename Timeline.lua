@@ -1,8 +1,8 @@
--- Timeline page: pick a category → encounter → saved note, render the note's
--- cooldowns as a horizontal per-player timeline (spell icons placed at their
--- cast time), with a separate red boss track on top. A Test button plays the
--- note back live (Scheduler preview mode) with a moving playhead; Shift+click
--- runs it at 3x. Clicking again while playing stops it.
+-- Timeline page: pick a category → dungeon/instance → boss → saved note, render
+-- the note's cooldowns as a horizontal per-player timeline (spell icons placed
+-- at their cast time), with a separate red boss track on top. A Test button
+-- plays the note back live (Scheduler preview mode) with a moving playhead;
+-- Shift+click runs it at 3x. Clicking again while playing stops it.
 -- Embedded into the Window shell via Timeline.BuildPage(host).
 
 local _, ns = ...
@@ -15,14 +15,16 @@ local LABEL_W = 96             -- left gutter for player/track names
 local BOSS_ROW_H = 26
 local ICON = 20
 
-local page, catDD, encDD, noteDD, testBtn, status
+local page, catDD, grpDD, bossDD, noteDD, testBtn, status
 local scroll, canvas, playhead
 local markerPool = {}          -- reusable icon markers
 local rowPool = {}             -- reusable per-track background rows
 local labelPool = {}
 
 local selCat = "mythicplus"
-local selEnc = nil
+local selGrp = 1               -- index into the category's groups
+local selBoss = 1              -- index into the group's bosses
+local selEnc = nil             -- resolved encounterID for the selected boss
 local selNote = nil            -- plan index within the encounter
 
 -- ── spell info ───────────────────────────────────────────────────────────────
@@ -244,12 +246,27 @@ local function onTestClick()
 end
 
 -- ── dropdown item providers ──────────────────────────────────────────────────
-local function encItems()
+local function currentBoss()
+  local groups = ns.Window.Groups(selCat)
+  local grp = groups[selGrp]
+  return grp and grp.bosses and grp.bosses[selBoss] or nil
+end
+
+local function grpItems()
   local items = {}
-  local cat = ns.Window.CategoryByKey(selCat)
-  if cat then
-    for _, enc in ipairs(cat.encounters or {}) do
-      items[#items + 1] = { text = enc.name, value = enc.id }
+  for i, g in ipairs(ns.Window.Groups(selCat)) do
+    items[#items + 1] = { text = g.name, value = i }
+  end
+  return items
+end
+
+local function bossItems()
+  local items = {}
+  local groups = ns.Window.Groups(selCat)
+  local grp = groups[selGrp]
+  if grp then
+    for i, b in ipairs(grp.bosses or {}) do
+      items[#items + 1] = { text = b.name, value = i }
     end
   end
   return items
@@ -280,22 +297,37 @@ local function refreshNoteDD()
   end
 end
 
-local function ensureEncSelection()
-  local cat = ns.Window.CategoryByKey(selCat)
-  local list = cat and cat.encounters or {}
-  local valid = false
-  for _, enc in ipairs(list) do if enc.id == selEnc then valid = true; break end end
-  if not valid then selEnc = list[1] and list[1].id or nil end
-  if encDD then
-    if selEnc then encDD:SetValue(selEnc, ns.Window.EncounterName(selEnc))
-    else encDD:SetValue(nil, "—") end
+local function resolveSelEnc()
+  local boss = currentBoss()
+  selEnc = boss and ns.Window.ResolveBossId(boss.name, boss.id) or nil
+end
+
+local function ensureGrpSelection()
+  local groups = ns.Window.Groups(selCat)
+  if not groups[selGrp] then selGrp = groups[1] and 1 or 1 end
+  if grpDD then
+    local g = groups[selGrp]
+    grpDD:SetValue(g and selGrp or nil, g and g.name or "—")
   end
+end
+
+local function ensureBossSelection()
+  local groups = ns.Window.Groups(selCat)
+  local grp = groups[selGrp]
+  local bosses = grp and grp.bosses or {}
+  if not bosses[selBoss] then selBoss = bosses[1] and 1 or 1 end
+  local boss = bosses[selBoss]
+  if bossDD then
+    bossDD:SetValue(boss and selBoss or nil, boss and boss.name or "—")
+  end
+  resolveSelEnc()
 end
 
 -- Public refresh (called after imports change the library).
 function Timeline.Refresh()
   if not page then return end
-  ensureEncSelection()
+  ensureGrpSelection()
+  ensureBossSelection()
   refreshNoteDD()
   renderCanvas()
 end
@@ -305,10 +337,10 @@ function Timeline.BuildPage(host)
 
   local hint = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   hint:SetPoint("TOPLEFT", 8, -6)
-  hint:SetText("Pick a saved note to preview its cooldown timeline. Test = live playback (Shift+click = 3x).  Shift+scroll = pan ◀ ▶")
+  hint:SetText("Pick a dungeon / boss / note to preview its cooldown timeline. Test = live playback (Shift+click = 3x).  Shift+scroll = pan ◀ ▶")
 
-  -- category dropdown
-  catDD = ns.Window.MakeDropdown(host, "CoolPlanTLCatDD", 110,
+  -- row 1: category + dungeon/instance
+  catDD = ns.Window.MakeDropdown(host, "CoolPlanTLCatDD", 100,
     function()
       local items = {}
       for _, c in ipairs(ns.Window.Categories()) do
@@ -318,7 +350,11 @@ function Timeline.BuildPage(host)
     end,
     function(key)
       selCat = key
-      ensureEncSelection()
+      selGrp = 1
+      selBoss = 1
+      selNote = nil
+      ensureGrpSelection()
+      ensureBossSelection()
       refreshNoteDD()
       renderCanvas()
     end)
@@ -328,27 +364,39 @@ function Timeline.BuildPage(host)
     if cat then selCat = cat.key; catDD:SetValue(cat.key, cat.label) end
   end
 
-  encDD = ns.Window.MakeDropdown(host, "CoolPlanTLEncDD", 200, encItems,
-    function(id)
-      selEnc = id
+  grpDD = ns.Window.MakeDropdown(host, "CoolPlanTLGrpDD", 180, grpItems,
+    function(idx)
+      selGrp = idx
+      selBoss = 1
       selNote = nil
+      ensureBossSelection()
       refreshNoteDD()
       renderCanvas()
     end)
-  encDD:SetPoint("LEFT", catDD, "RIGHT", 2, 0)
+  grpDD:SetPoint("LEFT", catDD, "RIGHT", 2, 0)
 
-  -- second row: note dropdown + its own Test button (kept off the first row so
-  -- the three dropdowns never overflow the page to the right)
-  noteDD = ns.Window.MakeDropdown(host, "CoolPlanTLNoteDD", 180, noteItems,
+  -- row 2: boss + note + Test (kept off the first row so the dropdowns never
+  -- overflow the page to the right)
+  bossDD = ns.Window.MakeDropdown(host, "CoolPlanTLBossDD", 160, bossItems,
+    function(idx)
+      selBoss = idx
+      selNote = nil
+      resolveSelEnc()
+      refreshNoteDD()
+      renderCanvas()
+    end)
+  bossDD:SetPoint("TOPLEFT", -8, -54)
+
+  noteDD = ns.Window.MakeDropdown(host, "CoolPlanTLNoteDD", 150, noteItems,
     function(idx)
       selNote = idx
       renderCanvas()
     end)
-  noteDD:SetPoint("TOPLEFT", -8, -54)
+  noteDD:SetPoint("LEFT", bossDD, "RIGHT", 2, 0)
 
   -- Test / Stop button (its own spot, with a hover tooltip explaining the speeds)
   testBtn = CreateFrame("Button", nil, host, "UIPanelButtonTemplate")
-  testBtn:SetSize(90, 22)
+  testBtn:SetSize(80, 22)
   testBtn:SetText("Test")
   testBtn:SetPoint("LEFT", noteDD, "RIGHT", 6, 2)
   testBtn:SetScript("OnClick", ns.wrap(onTestClick))
@@ -392,7 +440,8 @@ function Timeline.BuildPage(host)
   playhead:SetColorTexture(1, 0.9, 0.2, 0.9)
   playhead:Hide()
 
-  ensureEncSelection()
+  ensureGrpSelection()
+  ensureBossSelection()
   refreshNoteDD()
   renderCanvas()
 
