@@ -1,172 +1,61 @@
-# CoolPlan (WoW addon)
+# CoolPlan
 
-On-screen / sound / TTS cooldown reminders during boss encounters, driven by
-plans you export from **[coolplan.team](https://coolplan.team)**.
+On-screen / sound / TTS **cooldown reminders** for World of Warcraft Mythic+ and
+raid encounters. Companion addon to **[coolplan.team](https://coolplan.team)** —
+plan a team's cooldowns on the website, export a string, import it here, and the
+reminders fire automatically during the matching boss.
 
-The website analyzes a Warcraft Logs run and builds a team cooldown timeline.
-Click **Export to Addon** on a fight to get a CoolPlan string, paste it into this
-addon, and it fires reminders at the right times when you pull the matching boss
-(matched by `encounterID` via the `ENCOUNTER_START` event).
+## How it works
 
-> ⚠️ This folder currently lives inside the `team-cooldown-site` repo as a
-> temporary home. It is meant to be extracted into its own repo
-> (`pingping-e/CoolPlan`) and shipped as a standalone addon.
+1. On [coolplan.team](https://coolplan.team), open a boss timeline and click
+   **Export to Addon**. Rename each player to your real character names (so
+   reminders filter to the right person), then copy the string.
+2. In game: `/coolplan` → **Import / Export** tab → paste → **Load Plans**.
+3. Pull that boss. The addon matches the encounter and shows each player only
+   their own cooldowns (raid-wide defensives are shown to everyone).
 
-## Install (manual)
+The plan format is plain text, so you can also hand-edit it in the box.
 
-Copy the `coolplan-addon` folder into your WoW AddOns directory, **renaming it to
-`CoolPlan`** (the folder name must match the `.toc`):
+## Features
 
-```
-World of Warcraft/_retail_/Interface/AddOns/CoolPlan/
-  CoolPlan.toc
-  *.lua
-```
+- **Anticipation HUD** — icon / icon+name / bar styles, with a countdown and a
+  smooth depleting bar; configurable lead time, position, scale, font and color.
+- **Sound or TTS** alerts, with separate timing from the on-screen display.
+- **Upcoming queue** of the next few cooldowns.
+- **Boss ability timeline** (optional) layered onto the same countdown.
+- **Per-character saved plans** with a named library (multiple plans per boss),
+  a dungeon → boss browser, and a timeline preview with a "Test" playback.
+- **Share to party** — broadcast the active plan to party members in one click.
+- **Minimap button** (collects cleanly into MinimapButtonButton / Titan / etc).
 
-Then `/reload` or restart the client. If it shows as "out of date", set
-`## Interface:` in `CoolPlan.toc` to your client's build (see the number in the
-AddOns list), or tick **Load out of date AddOns**.
+## Slash commands
 
-## Usage
-
-1. On coolplan.team, open a fight timeline and click **Export to Addon**, then
-   **Copy String**.
-2. In game: `/coolplan edit` → paste into the box → **Load Plans**.
-3. Pull the boss. Reminders fire automatically (filtered to your character by
-   default).
-
-### Slash commands
-
-| Command | Action |
+| Command | What it does |
 |---|---|
-| `/coolplan` or `/cp` | Open options |
-| `/coolplan edit` | Import / Export window |
-| `/coolplan plans` | Saved Plans manager (use / rename / delete) |
-| `/coolplan list` | Print imported plans to chat |
-| `/coolplan test` | Fire a test reminder (sound + flash) |
-| `/coolplan demo` | Preview the anticipation countdown in town (synthetic plan) |
-| `/coolplan move` | Toggle move mode (drag the HUD + queue) |
-| `/coolplan lock` | Lock frames and save positions |
-| `/coolplan testenc <encounterID>` | Dry-run a stored plan's schedule now |
-| `/coolplan stop` | Stop the active schedule |
-| `/coolplan errors` | Show errors CoolPlan caught (for bug reports) |
-| `/coolplan debug` | Toggle: let errors pop up again (developer mode) |
+| `/coolplan` | Open the main window |
+| `/coolplan plans` | Saved Plans |
+| `/coolplan edit` | Import / Export |
+| `/coolplan options` | Options |
+| `/coolplan timeline` | Timeline preview |
+| `/coolplan share` | Share the active plan to your party |
+| `/coolplan test` / `demo` | Preview an alert / a countdown |
+| `/coolplan move` / `lock` | Move / lock the HUD frames |
+| `/coolplan minimap` | Toggle the minimap button |
+| `/coolplan errors` | Show suppressed Lua errors |
 
-### Errors
+## Install
 
-CoolPlan wraps its own callbacks (events, the combat ticker, slash, UI), so a bug
-here is **caught and suppressed** instead of spamming WoW's Lua error popup during
-a pull. You get one throttled chat notice; view the details with `/coolplan
-errors`. This does not touch other addons' error reporting. If you're debugging,
-`/coolplan debug` re-enables popups.
+- **CurseForge:** search for **CoolPlan** (recommended — auto-updates).
+- **Manual:** download, unzip, and copy the **`CoolPlan`** folder into
+  `World of Warcraft/_retail_/Interface/AddOns/`. Restart WoW.
 
-### Alerts
+## Notes
 
-Each cooldown shows as an **anticipation countdown**: the alert appears `lead`
-seconds before the cast with a depleting bar and a `3.. 2.. 1..` number, flips to
-**NOW** at the cast time, then clears. An **upcoming queue** lists the next few
-cooldowns with their countdowns.
+- No dependencies — bundles LibStub, LibDataBroker-1.1 and LibDBIcon-1.0 under
+  `Libs/` (each under its own license).
+- The website is the planning tool; this addon is the in-game display. Feedback
+  and bug reports: the Discord linked on coolplan.team.
 
-### Options (`/coolplan`)
+## License
 
-- **On-screen text** — toggle the anticipation HUD on/off.
-- **Alert sound mode** — pick one audible channel: **None** (screen only),
-  **Sound**, or **Text-to-speech**.
-  - **Sound cue** — when in Sound mode, pick a built-in sound kit.
-  - **TTS voice** — when in TTS mode, pick from the voices installed on your PC.
-- **Only my character** — filter to casts by your character (on by default). Off
-  = show the whole team's plan.
-- **On-screen lead** — how many seconds before the cast the HUD appears (default 4s).
-- **Sound/TTS lead** — how many seconds before the cast the sound/voice fires
-  (default 0s), independent of the on-screen lead.
-- **HUD** — scale, font size, and text color (presets).
-- **Upcoming queue** — show/hide and how many entries.
-- **Show boss mechanics** — include the boss ability timeline (red `[BOSS]` alerts).
-- **Show categories** — hide/show reminders by category (e.g. turn off Offensive).
-- **Move frames / Lock** — drag the HUD and queue, then lock to save positions
-  (also `/coolplan move` and `/coolplan lock`).
-- **Demo countdown** — preview the whole thing in town without a boss.
-
-## Saved plans (multiple per boss)
-
-Each boss keeps a **library of named plans** plus one shared boss timeline.
-Loading a plan **adds** it to that boss's list (existing plans are kept), so you
-can store several strategies / team comps per encounter.
-
-Open the manager with **Saved Plans** (in the import window or options, or
-`/coolplan plans`):
-
-- **Use** — make a plan the active one (it's what plays on pull). The active
-  plan is marked with a green `>`.
-- **Rename** / **Delete** — manage each plan.
-- **Export** — dump a single plan (or the boss timeline) back to text.
-- The boss timeline shows as its own red row; deleting it leaves the team plans.
-
-When you import a **team-only** plan, an existing boss timeline is preserved, so
-you can export the boss timeline once and layer different teams onto it.
-
-## Editing plans
-
-The CoolPlan format is human-readable, so the import box **is** the editor — edit
-times and spell IDs directly, then **Load Plans** again. **Export All** dumps your
-stored plans back out (Ctrl-C to copy), so you can round-trip:
-site → addon → tweak in game → export.
-
-## Format (v1)
-
-```
-COOLPLAN v1
-@meta source=coolplan
-
-[encounter] id=112526; name=Echo of Doragosa
-# time | spellId | player | category | spellName | alert
-0:08.0|123904|Lavie|offensive|Invoke Niuzao
-1:32.5|740|Mistweave|raid_defensive|Tranquility|Tranq for Doom
-# @boss | time | spellId | type | spellName
-@boss|0:10.0|388034|tank_buster|Doom Bolt
-@boss|0:25.0|388035|raid_aoe
-```
-
-- Line 1 is the magic header `COOLPLAN v1`.
-- `#` lines and blanks are ignored; `@meta` holds free-form key=value pairs.
-- `[encounter] id=<encounterID>; name=<boss>` starts a section.
-- Each **cooldown** row is pipe-delimited: `time | spellId | player | category? |
-  spellName? | alert?`. Time is `M:SS.T` relative to the encounter pull (plain
-  seconds like `92.5` are also accepted when hand-editing).
-- Each **boss mechanic** row starts with `@boss`: `@boss | time | spellId | type? |
-  spellName?`. Boss rows are optional, so team-only plans stay valid.
-
-### Boss timeline + layering teams
-
-The site can include the boss's ability timeline (in-game timelines are scarce for
-these encounters) so the addon shows **boss mechanics and team cooldowns on one
-countdown**. Boss mechanics ignore the "only my character" / category filters and
-render in red with a `[BOSS]` tag.
-
-When you import a **team-only** plan for an encounter that already has a boss
-timeline, the addon **keeps the existing boss timeline** — so you can export the
-boss timeline once and then layer different teams' cooldown plans onto the same
-boss.
-
-The canonical spec and a matching TypeScript implementation live in the website
-repo at `lib/export/coolplan-format.ts`; `Format.lua` here is a byte-compatible
-mirror (verified against the same fixtures).
-
-## Files
-
-| File | Responsibility |
-|---|---|
-| `Core.lua` | Lifecycle, encounter events, slash commands |
-| `Format.lua` | Parse / serialize the v1 format (mirrors the TS module) |
-| `DB.lua` | SavedVariables (`CoolPlanDB`): plans + options |
-| `Scheduler.lua` | `ENCOUNTER_START` → sorted reminder queue via `C_Timer` ticker |
-| `Reminders.lua` | HUD frame + sound + TTS |
-| `Util.lua` | Error containment (safecall/wrap) + captured-error log |
-| `Editor.lua` | Import / Export window |
-| `Manager.lua` | Saved Plans manager (library list: use/rename/delete/export) |
-| `Options.lua` | Options window |
-| `EncounterNames.lua` | Generated `encounterID → name` fallback table |
-
-`EncounterNames.lua` is generated from the site catalogs by
-`scripts/gen-addon-encounter-names.ts` (run `pnpm tsx
-scripts/gen-addon-encounter-names.ts` in the website repo).
+MIT — see [LICENSE](LICENSE). Bundled libraries keep their own licenses.
