@@ -41,7 +41,8 @@ AddOns list), or tick **Load out of date AddOns**.
 |---|---|
 | `/coolplan` or `/cp` | Open options |
 | `/coolplan edit` | Import / Export window |
-| `/coolplan list` | List imported plans |
+| `/coolplan plans` | Saved Plans manager (use / rename / delete) |
+| `/coolplan list` | Print imported plans to chat |
 | `/coolplan test` | Fire a test reminder (sound + flash) |
 | `/coolplan demo` | Preview the anticipation countdown in town (synthetic plan) |
 | `/coolplan move` | Toggle move mode (drag the HUD + queue) |
@@ -71,6 +72,24 @@ cooldowns with their countdowns.
 - **Move frames / Lock** — drag the HUD and queue, then lock to save positions
   (also `/coolplan move` and `/coolplan lock`).
 - **Demo countdown** — preview the whole thing in town without a boss.
+
+## Saved plans (multiple per boss)
+
+Each boss keeps a **library of named plans** plus one shared boss timeline.
+Loading a plan **adds** it to that boss's list (existing plans are kept), so you
+can store several strategies / team comps per encounter.
+
+Open the manager with **Saved Plans** (in the import window or options, or
+`/coolplan plans`):
+
+- **Use** — make a plan the active one (it's what plays on pull). The active
+  plan is marked with a green `>`.
+- **Rename** / **Delete** — manage each plan.
+- **Export** — dump a single plan (or the boss timeline) back to text.
+- The boss timeline shows as its own red row; deleting it leaves the team plans.
+
+When you import a **team-only** plan, an existing boss timeline is preserved, so
+you can export the boss timeline once and layer different teams onto it.
 
 ## Editing plans
 
@@ -129,6 +148,7 @@ mirror (verified against the same fixtures).
 | `Scheduler.lua` | `ENCOUNTER_START` → sorted reminder queue via `C_Timer` ticker |
 | `Reminders.lua` | HUD frame + sound + TTS |
 | `Editor.lua` | Import / Export window |
+| `Manager.lua` | Saved Plans manager (library list: use/rename/delete/export) |
 | `Options.lua` | Options window |
 | `EncounterNames.lua` | Generated `encounterID → name` fallback table |
 

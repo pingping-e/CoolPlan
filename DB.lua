@@ -1,38 +1,36 @@
--- SavedVariables (CoolPlanDB): imported plans keyed by encounterID + options.
+-- SavedVariables (CoolPlanDB): a per-encounter LIBRARY of named cooldown plans
+-- plus a shared boss timeline, and options.
+--
+-- library[encounterID] = {
+--   name   = "Boss Name",
+--   boss   = { {timeMs, spellId, type, spellName}, ... } | nil,   -- shared, layered
+--   plans  = { { label = "Team A", reminders = { ... } }, ... },  -- multiple
+--   active = <index into plans>,
+-- }
 
 local _, ns = ...
 local DB = {}
 ns.DB = DB
 
 local defaults = {
-  plans = {}, -- [encounterID] = { name = "...", reminders = { ... } }
+  library = {},
   options = {
-    filterToMe = true,    -- only show reminders cast by my character
-    leadSeconds = 4,      -- anticipation window: alert appears N seconds before the cast
-    textEnabled = true,   -- on-screen HUD
-    soundEnabled = true,  -- sound cue when an alert appears
-    ttsEnabled = false,   -- text-to-speech
-    ttsCountdown = false, -- speak "3.. 2.. 1.." each second (vs announce once)
-    ttsVoice = 0,         -- C_VoiceChat voice id
+    filterToMe = true,
+    leadSeconds = 4,
+    textEnabled = true,
+    soundEnabled = true,
+    ttsEnabled = false,
+    ttsCountdown = false,
+    ttsVoice = 0,
     soundKit = "RAID_WARNING",
-    customSound = "",     -- file path; overrides soundKit when non-empty
-
-    -- HUD appearance
+    customSound = "",
+    showBoss = true,
     scale = 1.0,
     fontSize = 28,
     textColor = { r = 1, g = 0.95, b = 0.4 },
-
-    -- boss mechanics (from the @boss timeline) shown alongside cooldowns
-    showBoss = true,
-
-    -- upcoming-reminders queue
     showQueue = true,
     queueCount = 3,
-
-    -- category gating: [category] = false hides those reminders (nil/true = show)
     categoryEnabled = {},
-
-    -- saved frame placement (relative to UIParent); locked = not draggable
     hud = { point = "CENTER", relPoint = "CENTER", x = 0, y = 200, locked = true },
     queueAnchor = { point = "CENTER", relPoint = "CENTER", x = 0, y = 60, locked = true },
   },
@@ -51,22 +49,107 @@ end
 
 function DB.Init()
   CoolPlanDB = CoolPlanDB or {}
+  -- migrate the old single-plan-per-encounter storage → library
+  if CoolPlanDB.plans and not CoolPlanDB.library then
+    CoolPlanDB.library = {}
+    for id, p in pairs(CoolPlanDB.plans) do
+      CoolPlanDB.library[id] = {
+        name = p.name,
+        boss = p.boss,
+        plans = { { label = "Imported", reminders = p.reminders or {} } },
+        active = 1,
+      }
+    end
+    CoolPlanDB.plans = nil
+  end
   deepFill(CoolPlanDB, defaults)
   DB.data = CoolPlanDB
   return CoolPlanDB
 end
 
-function DB.Options()
-  return CoolPlanDB.options
-end
+function DB.Options() return CoolPlanDB.options end
+function DB.Library() return CoolPlanDB.library end
+function DB.GetEncounter(id) return CoolPlanDB.library[id] end
 
-function DB.Plans()
-  return CoolPlanDB.plans
+function DB.ActiveReminders(id)
+  local e = CoolPlanDB.library[id]
+  if not e then return nil end
+  local p = e.plans[e.active]
+  return p and p.reminders or {}
 end
 
 -- A category is shown unless explicitly disabled.
 function DB.CategoryEnabled(category)
   if not category or category == "" then return true end
-  local v = CoolPlanDB.options.categoryEnabled[category]
-  return v ~= false
+  return CoolPlanDB.options.categoryEnabled[category] ~= false
+end
+
+-- Add a plan to an encounter (or just refresh the boss timeline). Returns the
+-- new plan index, or 0 when the import was a boss-timeline-only payload.
+function DB.AddPlan(id, encName, label, reminders, boss)
+  local lib = CoolPlanDB.library
+  local e = lib[id]
+  if not e then
+    e = { name = encName or ("Encounter " .. id), boss = nil, plans = {}, active = 0 }
+    lib[id] = e
+  end
+  if encName and encName ~= "" then e.name = encName end
+  if boss and #boss > 0 then e.boss = boss end -- update boss; else keep existing
+
+  if (not reminders or #reminders == 0) and boss and #boss > 0 then
+    return 0 -- boss-only import: refreshed boss timeline, no plan added
+  end
+
+  e.plans[#e.plans + 1] = {
+    label = (label and label ~= "" and label) or ("Plan " .. (#e.plans + 1)),
+    reminders = reminders or {},
+  }
+  e.active = #e.plans -- newly imported becomes active
+  return #e.plans
+end
+
+function DB.SetActive(id, index)
+  local e = CoolPlanDB.library[id]
+  if e and e.plans[index] then e.active = index end
+end
+
+function DB.RenamePlan(id, index, label)
+  local e = CoolPlanDB.library[id]
+  if e and e.plans[index] and label and label ~= "" then e.plans[index].label = label end
+end
+
+local function pruneIfEmpty(id, e)
+  if #e.plans == 0 and not (e.boss and #e.boss > 0) then
+    CoolPlanDB.library[id] = nil
+  end
+end
+
+function DB.DeletePlan(id, index)
+  local e = CoolPlanDB.library[id]
+  if not e or not e.plans[index] then return end
+  table.remove(e.plans, index)
+  if e.active > #e.plans then e.active = #e.plans end
+  if e.active < 1 and #e.plans > 0 then e.active = 1 end
+  pruneIfEmpty(id, e)
+end
+
+function DB.DeleteBoss(id)
+  local e = CoolPlanDB.library[id]
+  if not e then return end
+  e.boss = nil
+  pruneIfEmpty(id, e)
+end
+
+-- Build a serializable { [id] = { name, reminders, boss } } from the library.
+-- onlyId / onlyIndex narrow it to a single encounter / plan (for per-row export).
+function DB.ToSerializable(onlyId, onlyIndex)
+  local out = {}
+  for id, e in pairs(CoolPlanDB.library) do
+    if (not onlyId) or id == onlyId then
+      local idx = onlyIndex or e.active
+      local p = e.plans[idx]
+      out[id] = { name = e.name, reminders = (p and p.reminders) or {}, boss = e.boss }
+    end
+  end
+  return out
 end

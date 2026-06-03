@@ -50,6 +50,8 @@ SlashCmdList["COOLPLAN"] = function(msg)
     ns.Options.Open()
   elseif cmd == "edit" or cmd == "import" or cmd == "export" then
     ns.Editor.Open()
+  elseif cmd == "plans" or cmd == "manager" or cmd == "saved" then
+    ns.Manager.Open()
   elseif cmd == "test" then
     ns.Reminders.Test()
   elseif cmd == "demo" then
@@ -73,12 +75,16 @@ SlashCmdList["COOLPLAN"] = function(msg)
     out("stopped.")
   elseif cmd == "list" then
     local n = 0
-    for id, plan in pairs(ns.DB.Plans()) do
+    for id, e in pairs(ns.DB.Library()) do
       n = n + 1
-      out(("  [%d] %s — %d reminders"):format(id, plan.name or "?", #plan.reminders))
+      out(("  [%d] %s — %d plan(s)%s"):format(
+        id, e.name or "?", #e.plans, (e.boss and #e.boss > 0) and (", boss x" .. #e.boss) or ""))
+      for i, p in ipairs(e.plans) do
+        out(("       %s %s (%d cd)"):format(i == e.active and "|cff66ff66>|r" or " ", p.label, #p.reminders))
+      end
     end
     if n == 0 then out("no plans imported yet. /coolplan edit to paste one.") end
   else
-    out("commands: options | edit | list | test | demo | move | lock | testenc <id> | stop")
+    out("commands: options | edit | plans | list | test | demo | move | lock | testenc <id> | stop")
   end
 end

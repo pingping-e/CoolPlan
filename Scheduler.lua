@@ -89,13 +89,13 @@ local function run(cues)
   return true
 end
 
--- Build the combined cue list for a plan:
+-- Build the combined cue list:
 --  • cooldowns (kind="cd")  — filtered by "only me" + enabled categories
 --  • boss mechanics (kind="boss") — always (no player/category filter)
-local function buildCues(plan)
+local function buildCues(reminders, boss)
   local o = ns.DB.Options()
   local cues = {}
-  for _, r in ipairs(plan.reminders or {}) do
+  for _, r in ipairs(reminders or {}) do
     local meOk = (not o.filterToMe) or nameMatchesMe(r.player)
     if meOk and ns.DB.CategoryEnabled(r.category) then
       cues[#cues + 1] = {
@@ -104,8 +104,8 @@ local function buildCues(plan)
       }
     end
   end
-  if o.showBoss and plan.boss then
-    for _, b in ipairs(plan.boss) do
+  if o.showBoss and boss then
+    for _, b in ipairs(boss) do
       cues[#cues + 1] = {
         kind = "boss", timeMs = b.timeMs, spellId = b.spellId,
         bossType = b.type, spellName = b.spellName,
@@ -115,11 +115,12 @@ local function buildCues(plan)
   return cues
 end
 
--- Start from a stored plan. Returns true if at least one cue was armed.
+-- Start from the encounter's ACTIVE plan + shared boss timeline.
 function Scheduler.Start(encounterID)
-  local plan = ns.DB.Plans()[encounterID]
-  if not plan then return false end
-  local cues = buildCues(plan)
+  local e = ns.DB.GetEncounter(encounterID)
+  if not e then return false end
+  local plan = e.plans[e.active]
+  local cues = buildCues(plan and plan.reminders or {}, e.boss)
   if #cues == 0 then return false end
   activeId = encounterID
   return run(cues)

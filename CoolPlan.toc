@@ -12,5 +12,6 @@ DB.lua
 Reminders.lua
 Scheduler.lua
 Editor.lua
+Manager.lua
 Options.lua
 Core.lua

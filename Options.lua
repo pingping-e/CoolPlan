@@ -224,7 +224,8 @@ local function build()
     if not ns.Scheduler.StartDemo() then ns.Print("demo failed.") end
   end)
   button(f, "Stop", 60, LX + 242, -468, function() ns.Scheduler.Stop() end)
-  button(f, "Import / Export", 130, RX + 50, -468, function() ns.Editor.Open() end)
+  button(f, "Saved Plans", 110, RX - 20, -468, function() ns.Manager.Open() end)
+  button(f, "Import…", 96, RX + 96, -468, function() ns.Editor.Open() end)
 
   return f
 end
