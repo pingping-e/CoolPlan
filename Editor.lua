@@ -70,7 +70,13 @@ function Editor.BuildPage(host)
   local loadBtn = makeButton(host, "Load Plans", 100)
   loadBtn:SetPoint("BOTTOMRIGHT", -8, 18)
   loadBtn:SetScript("OnClick", ns.wrap(function()
-    local plans, _, err = ns.Format.Parse(host.editbox:GetText())
+    local raw = host.editbox:GetText()
+    -- WoW EditBoxes can store a typed/pasted "|" as a doubled "||" (the engine
+    -- preserves it so it isn't read as a |c / |r / |T… escape). Our row
+    -- delimiter is a single "|", so collapse doubled pipes before parsing.
+    -- Harmless for clean strings (the format never contains "||").
+    local text = raw:gsub("||", "|")
+    local plans, _, err = ns.Format.Parse(text)
     if not plans then
       host.status:SetText("|cffff5555" .. (err or "parse error") .. "|r")
       return
@@ -91,9 +97,21 @@ function Editor.BuildPage(host)
     end
     host.nameBox:SetText("")
     if nRem == 0 and bossOnly == 0 then
-      -- parsed an encounter but zero cooldown rows: almost always a truncated paste.
-      host.status:SetText(("|cffffcc00Added %d plan(s) but 0 cooldowns parsed — the paste may be truncated (text length %d). Re-copy from the site and paste again.|r"):format(
-        added, #host.editbox:GetText()))
+      -- Encounters parsed but no cooldown rows. Surface the first data row
+      -- exactly as stored (pipes shown literally so chat doesn't eat them) to
+      -- pin down any remaining delimiter mangling by the EditBox.
+      local sample
+      for line in (raw .. "\n"):gmatch("(.-)\r?\n") do
+        local t = (line:gsub("^%s+", ""):gsub("%s+$", ""))
+        if t:match("^%d") then sample = t; break end
+      end
+      if sample then
+        local _, pipes = sample:gsub("|", "|")
+        ns.Print(("import debug: first row has %d pipe(s), len %d: %s"):format(
+          pipes, #sample, (sample:gsub("|", "||"))))
+      end
+      host.status:SetText(("|cffffcc00Added %d plan(s) but 0 cooldowns parsed (text length %d — not truncated). See chat for a diagnostic line.|r"):format(
+        added, #raw))
     else
       host.status:SetText(("|cff66ff66Added %d plan(s): %d cooldowns, %d boss cues%s.|r"):format(
         added, nRem, nBoss, bossOnly > 0 and (" (%d boss-only)"):format(bossOnly) or ""))
