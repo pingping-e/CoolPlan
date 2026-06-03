@@ -6,6 +6,7 @@
 ## SavedVariables: CoolPlanDB
 ## SavedVariablesPerCharacter: CoolPlanCharDB
 ## X-Website: https://coolplan.team
+## X-License: MIT
 
 Libs\LibStub\LibStub.lua
 Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
