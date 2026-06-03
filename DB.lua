@@ -113,6 +113,13 @@ function DB.Init()
     CoolPlanDB.options.showQueue = false
     CoolPlanDB._migrShowQueueOff = true
   end
+  -- One-time: the Show-categories toggle had a Lua bug (`v and nil or false`
+  -- always wrote false), so the saved map is corrupt — every touched category
+  -- got stuck disabled. Clear it once so the fixed toggle starts all-enabled.
+  if not CoolPlanDB._migrCategoryReset then
+    CoolPlanDB.options.categoryEnabled = {}
+    CoolPlanDB._migrCategoryReset = true
+  end
   DB.data = CoolPlanDB
   return CoolPlanDB
 end

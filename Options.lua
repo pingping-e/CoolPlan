@@ -329,7 +329,11 @@ function Options.BuildPage(host)
     local key = c[1]
     checkbox(host, c[2], gx, gy,
       function() return ns.DB.CategoryEnabled(key) end,
-      function(v) o.categoryEnabled[key] = v and nil or false end)
+      function(v)
+        -- enabled = nil (default-on), disabled = false. NOTE: `v and nil or false`
+        -- is a Lua trap that always yields false — must branch explicitly.
+        if v then o.categoryEnabled[key] = nil else o.categoryEnabled[key] = false end
+      end)
     col = col + 1
     if col % 3 == 0 then gx = LX; gy = gy - 28 else gx = gx + 200 end
   end
