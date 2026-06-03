@@ -9,7 +9,8 @@ ns.Options = Options
 local CATEGORIES = {
   { "personal_defensive", "Personal def" },
   { "external_defensive", "External def" },
-  { "raid_defensive",     "Raid/Healer Cd" },
+  { "raid_defensive",     "Raid Cd (raid-wide)" },
+  { "healer_cd",          "Healer Cd" },
   { "offensive",          "Offensive" },
   { "utility",            "Utility" },
   { "bloodlust",          "Bloodlust" },
@@ -334,11 +335,13 @@ function Options.BuildPage(host)
   end
 
   -- ── bottom buttons (no Saved Plans / Import — the sidebar replaces them) ──
-  button(host, "Test alert", 110, LX, -528, function() ns.Reminders.Test() end)
-  button(host, "Demo countdown", 140, LX + 118, -528, function()
+  -- Moved down to -556 so the 4th category row (10 categories → 4 rows, last
+  -- row at gy=-512) clears the buttons.
+  button(host, "Test alert", 110, LX, -556, function() ns.Reminders.Test() end)
+  button(host, "Demo countdown", 140, LX + 118, -556, function()
     if not ns.Scheduler.StartDemo() then ns.Print("demo failed.") end
   end)
-  button(host, "Stop", 70, LX + 266, -528, function() ns.Scheduler.Stop() end)
+  button(host, "Stop", 70, LX + 266, -556, function() ns.Scheduler.Stop() end)
 
   if ns.Style then
     ns.Style.Apply(host)

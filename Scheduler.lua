@@ -126,10 +126,11 @@ local function run(cues, opts)
   return true
 end
 
--- Categories shown to EVERYONE regardless of "only me": raid-wide defensives
--- and healer cooldowns (공생기 & 힐러 쿨기) are group-relevant, so a player
--- should see them even when they belong to someone else. Everything else is
--- filtered to the local character when filterToMe is on.
+-- Categories shown to EVERYONE regardless of "only me": only raid-wide
+-- defensives (공생기) are group-relevant, so a player should see them even
+-- when they belong to someone else. Healer cooldowns (healer_cd / 힐러 쿨기)
+-- are NOT here — they are self-only and filtered to the local character when
+-- filterToMe is on, like every other non-raid-wide category.
 local ALWAYS_SHOWN = { raid_defensive = true }
 
 -- Build the combined cue list:
