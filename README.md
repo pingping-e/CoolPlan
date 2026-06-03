@@ -66,6 +66,7 @@ cooldowns with their countdowns.
 - **Sound cue** — pick a built-in sound, or set a **custom sound file** path.
 - **HUD** — scale, font size, and text color (presets).
 - **Upcoming queue** — show/hide and how many entries.
+- **Show boss mechanics** — include the boss ability timeline (red `[BOSS]` alerts).
 - **Show categories** — hide/show reminders by category (e.g. turn off Offensive).
 - **Move frames / Lock** — drag the HUD and queue, then lock to save positions
   (also `/coolplan move` and `/coolplan lock`).
@@ -88,14 +89,31 @@ COOLPLAN v1
 # time | spellId | player | category | spellName | alert
 0:08.0|123904|Lavie|offensive|Invoke Niuzao
 1:32.5|740|Mistweave|raid_defensive|Tranquility|Tranq for Doom
+# @boss | time | spellId | type | spellName
+@boss|0:10.0|388034|tank_buster|Doom Bolt
+@boss|0:25.0|388035|raid_aoe
 ```
 
 - Line 1 is the magic header `COOLPLAN v1`.
 - `#` lines and blanks are ignored; `@meta` holds free-form key=value pairs.
 - `[encounter] id=<encounterID>; name=<boss>` starts a section.
-- Each reminder row is pipe-delimited: `time | spellId | player | category? |
+- Each **cooldown** row is pipe-delimited: `time | spellId | player | category? |
   spellName? | alert?`. Time is `M:SS.T` relative to the encounter pull (plain
   seconds like `92.5` are also accepted when hand-editing).
+- Each **boss mechanic** row starts with `@boss`: `@boss | time | spellId | type? |
+  spellName?`. Boss rows are optional, so team-only plans stay valid.
+
+### Boss timeline + layering teams
+
+The site can include the boss's ability timeline (in-game timelines are scarce for
+these encounters) so the addon shows **boss mechanics and team cooldowns on one
+countdown**. Boss mechanics ignore the "only my character" / category filters and
+render in red with a `[BOSS]` tag.
+
+When you import a **team-only** plan for an encounter that already has a boss
+timeline, the addon **keeps the existing boss timeline** — so you can export the
+boss timeline once and then layer different teams' cooldown plans onto the same
+boss.
 
 The canonical spec and a matching TypeScript implementation live in the website
 repo at `lib/export/coolplan-format.ts`; `Format.lua` here is a byte-compatible

@@ -22,6 +22,9 @@ local defaults = {
     fontSize = 28,
     textColor = { r = 1, g = 0.95, b = 0.4 },
 
+    -- boss mechanics (from the @boss timeline) shown alongside cooldowns
+    showBoss = true,
+
     -- upcoming-reminders queue
     showQueue = true,
     queueCount = 3,

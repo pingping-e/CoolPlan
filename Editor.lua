@@ -78,16 +78,23 @@ local function build()
       f.status:SetText("|cffff5555" .. (err or "parse error") .. "|r")
       return
     end
-    local enc, rem = 0, 0
+    local enc, rem, bos = 0, 0, 0
     for id, plan in pairs(plans) do
+      local existing = ns.DB.Plans()[id]
+      -- Preserve an existing boss timeline when importing a team-only plan, so
+      -- you can layer different teams' cooldowns onto the same boss.
+      if existing and existing.boss and not plan.boss then
+        plan.boss = existing.boss
+      end
       ns.DB.Plans()[id] = plan
       enc = enc + 1
       rem = rem + #plan.reminders
+      bos = bos + (plan.boss and #plan.boss or 0)
     end
     if enc == 0 then
       f.status:SetText("|cffffcc55Parsed OK but found 0 encounters.|r")
     else
-      f.status:SetText(("|cff66ff66Loaded %d encounter(s), %d reminders.|r"):format(enc, rem))
+      f.status:SetText(("|cff66ff66Loaded %d encounter(s), %d reminders, %d boss mechanics.|r"):format(enc, rem, bos))
     end
   end)
 

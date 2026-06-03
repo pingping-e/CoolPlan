@@ -99,6 +99,20 @@ function Format.Serialize(plans, meta)
       for k = 1, n do row[k] = fields[k] end
       lines[#lines + 1] = table.concat(row, "|")
     end
+
+    if enc.boss then
+      local bs = {}
+      for _, b in ipairs(enc.boss) do bs[#bs + 1] = b end
+      table.sort(bs, function(a, b) return a.timeMs < b.timeMs end)
+      for _, b in ipairs(bs) do
+        local fields = { "@boss", Format.FormatTime(b.timeMs), tostring(b.spellId), sanitize(b.type), sanitize(b.spellName) }
+        local n = #fields
+        while n > 3 and fields[n] == "" do n = n - 1 end
+        local row = {}
+        for k = 1, n do row[k] = fields[k] end
+        lines[#lines + 1] = table.concat(row, "|")
+      end
+    end
   end
 
   return table.concat(lines, "\n")
@@ -141,7 +155,17 @@ function Format.Parse(text)
         plans[tonumber(id)] = current
       else
         local f = splitPipe(line)
-        if #f >= 3 and current then
+        if current and trim(f[1]) == "@boss" then
+          -- boss ability row: @boss | time | spellId | type? | spellName?
+          local sid = tonumber(f[3])
+          if sid then
+            local b = { timeMs = Format.ParseTime(f[2]), spellId = sid }
+            local ty = trim(f[4] or ""); if ty ~= "" then b.type = ty end
+            local bn = trim(f[5] or ""); if bn ~= "" then b.spellName = bn end
+            current.boss = current.boss or {}
+            current.boss[#current.boss + 1] = b
+          end
+        elseif #f >= 3 and current then
           local spellId = tonumber(f[2])
           if spellId then
             local r = {

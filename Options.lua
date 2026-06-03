@@ -200,10 +200,11 @@ local function build()
   header(f, "Upcoming queue", RX, -204)
   checkbox(f, "Show queue", RX, -224, function() return o.showQueue end, function(v) o.showQueue = v end)
   slider(f, "Queue size", RX, -252, 1, 6, 1, function() return o.queueCount or 3 end, function(v) o.queueCount = v end)
+  checkbox(f, "Show boss mechanics", RX, -284, function() return o.showBoss end, function(v) o.showBoss = v end)
 
-  header(f, "Position", RX, -300)
-  button(f, "Move frames", 110, RX, -320, function() ns.Reminders.ToggleMover() end)
-  button(f, "Lock", 60, RX + 116, -320, function() ns.Reminders.SetLocked(true) end)
+  header(f, "Position", RX, -316)
+  button(f, "Move frames", 110, RX, -336, function() ns.Reminders.ToggleMover() end)
+  button(f, "Lock", 60, RX + 116, -336, function() ns.Reminders.SetLocked(true) end)
 
   -- ── categories ──
   header(f, "Show categories", LX, -362)

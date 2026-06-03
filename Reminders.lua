@@ -221,22 +221,26 @@ function Reminders.ToggleMover()
 end
 
 -- ── per-tick render (called by Scheduler) ─────────────────────────────────────
--- active = { reminder, remaining, total } or nil; upcoming = { {reminder, remaining}, ... }
+-- active = { cue, remaining, total } or nil; upcoming = { {cue, remaining}, ... }
+-- A cue has: kind ("cd" | "boss"), timeMs, spellId, spellName?, alert?, bossType?
 function Reminders.RenderTick(active, upcoming, o)
   ensureFrames()
   if moverOn then return end
 
   if active and o.textEnabled then
-    local r = active.reminder
-    local name, icon = spellInfo(r.spellId)
+    local cue = active.cue
+    local isBoss = cue.kind == "boss"
+    local _, icon = spellInfo(cue.spellId)
     if icon then hud.icon:SetTexture(icon); hud.icon:Show() else hud.icon:Hide() end
-    hud.name:SetText(labelFor(r))
+    local c = isBoss and { r = 1, g = 0.45, b = 0.3 } or (o.textColor or { r = 1, g = 0.95, b = 0.4 })
+    hud.name:SetText((isBoss and "|cffff7777[BOSS]|r " or "") .. labelFor(cue))
+    hud.name:SetTextColor(c.r, c.g, c.b)
     local total = active.total or (o.leadSeconds or 4)
     local rem = active.remaining
     if rem > 0 then
       hud.count:SetText(tostring(math.ceil(rem)))
       hud.bar:SetValue(math.max(0, math.min(1, total > 0 and rem / total or 0)))
-      hud.bar:SetStatusBarColor((o.textColor or {}).r or 1, (o.textColor or {}).g or 0.95, (o.textColor or {}).b or 0.4)
+      hud.bar:SetStatusBarColor(c.r, c.g, c.b)
     else
       hud.count:SetText("")
       hud.bar:SetValue(1)
@@ -253,9 +257,10 @@ function Reminders.RenderTick(active, upcoming, o)
     for i, row in ipairs(queue.rows) do
       local item = upcoming[i]
       if item then
-        local nm = labelFor(item.reminder)
-        row:SetText(("|cffffd200%s|r  %s |cff888888(in %ds)|r"):format(
-          ns.Format.FormatTime(item.reminder.timeMs), nm, math.max(0, math.ceil(item.remaining))))
+        local cue = item.cue
+        local tag = cue.kind == "boss" and "|cffff7777[B]|r " or ""
+        row:SetText(("%s|cffffd200%s|r  %s |cff888888(in %ds)|r"):format(
+          tag, ns.Format.FormatTime(cue.timeMs), labelFor(cue), math.max(0, math.ceil(item.remaining))))
         row:Show()
       else
         row:SetText(""); row:Hide()
@@ -302,8 +307,9 @@ end
 function Reminders.Test()
   ensureFrames()
   local o = ns.DB.Options()
-  Reminders.Cue({ spellId = 740, alert = "CoolPlan test" }, o)
-  Reminders.RenderTick({ reminder = { spellId = 740, alert = "CoolPlan test" }, remaining = 0, total = o.leadSeconds }, nil, o)
+  local cue = { kind = "cd", spellId = 740, alert = "CoolPlan test" }
+  Reminders.Cue(cue, o)
+  Reminders.RenderTick({ cue = cue, remaining = 0, total = o.leadSeconds }, nil, o)
   C_Timer.After(1.5, function() Reminders.Clear() end)
 end
 

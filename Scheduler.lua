@@ -31,7 +31,7 @@ local function tick()
     -- appear cue (sound + announce) once when the window opens
     if (not item.cued) and elapsed >= item.showAt then
       item.cued = true
-      ns.Reminders.Cue(item.reminder, o)
+      ns.Reminders.Cue(item.cue, o)
     end
 
     -- per-second TTS countdown
@@ -47,13 +47,13 @@ local function tick()
       -- in the anticipation window: nearest cast becomes the big alert,
       -- any others fall into the queue
       if (not active) or remaining < active.remaining then
-        if active then upcoming[#upcoming + 1] = { reminder = active.reminder, remaining = active.remaining } end
-        active = { reminder = item.reminder, remaining = remaining, total = lead }
+        if active then upcoming[#upcoming + 1] = { cue = active.cue, remaining = active.remaining } end
+        active = { cue = item.cue, remaining = remaining, total = lead }
       else
-        upcoming[#upcoming + 1] = { reminder = item.reminder, remaining = remaining }
+        upcoming[#upcoming + 1] = { cue = item.cue, remaining = remaining }
       end
     elseif remaining > 0 then
-      upcoming[#upcoming + 1] = { reminder = item.reminder, remaining = remaining }
+      upcoming[#upcoming + 1] = { cue = item.cue, remaining = remaining }
     end
   end
 
@@ -64,17 +64,17 @@ local function tick()
   ns.Reminders.RenderTick(active, upcoming, o)
 end
 
--- Run an arbitrary reminder list (already filtered). Returns true if armed.
-local function run(reminders)
+-- Run an arbitrary cue list (already filtered). Returns true if armed.
+local function run(cues)
   Scheduler.Stop()
   local o = ns.DB.Options()
   local lead = o.leadSeconds or 4
 
   queue = {}
-  for _, r in ipairs(reminders) do
-    local castAt = r.timeMs / 1000
+  for _, c in ipairs(cues) do
+    local castAt = c.timeMs / 1000
     queue[#queue + 1] = {
-      reminder = r,
+      cue = c,
       castAt = castAt,
       showAt = math.max(0, castAt - lead),
       cued = false,
@@ -89,35 +89,51 @@ local function run(reminders)
   return true
 end
 
--- Filter a plan's reminders by "only me" + enabled categories.
-local function filterReminders(plan)
+-- Build the combined cue list for a plan:
+--  • cooldowns (kind="cd")  — filtered by "only me" + enabled categories
+--  • boss mechanics (kind="boss") — always (no player/category filter)
+local function buildCues(plan)
   local o = ns.DB.Options()
-  local out = {}
-  for _, r in ipairs(plan.reminders) do
+  local cues = {}
+  for _, r in ipairs(plan.reminders or {}) do
     local meOk = (not o.filterToMe) or nameMatchesMe(r.player)
-    local catOk = ns.DB.CategoryEnabled(r.category)
-    if meOk and catOk then out[#out + 1] = r end
+    if meOk and ns.DB.CategoryEnabled(r.category) then
+      cues[#cues + 1] = {
+        kind = "cd", timeMs = r.timeMs, spellId = r.spellId,
+        player = r.player, category = r.category, spellName = r.spellName, alert = r.alert,
+      }
+    end
   end
-  return out
+  if o.showBoss and plan.boss then
+    for _, b in ipairs(plan.boss) do
+      cues[#cues + 1] = {
+        kind = "boss", timeMs = b.timeMs, spellId = b.spellId,
+        bossType = b.type, spellName = b.spellName,
+      }
+    end
+  end
+  return cues
 end
 
--- Start from a stored plan. Returns true if at least one reminder was armed.
+-- Start from a stored plan. Returns true if at least one cue was armed.
 function Scheduler.Start(encounterID)
   local plan = ns.DB.Plans()[encounterID]
   if not plan then return false end
-  local reminders = filterReminders(plan)
-  if #reminders == 0 then return false end
+  local cues = buildCues(plan)
+  if #cues == 0 then return false end
   activeId = encounterID
-  return run(reminders)
+  return run(cues)
 end
 
 -- A short synthetic schedule so the user can preview the countdown in town.
 function Scheduler.StartDemo()
-  local now = 0
+  local me = UnitName("player")
   local demo = {
-    { timeMs = 3000,  spellId = 740,    player = UnitName("player"), spellName = "Tranquility", category = "raid_defensive" },
-    { timeMs = 8000,  spellId = 48707,  player = UnitName("player"), spellName = "Anti-Magic Shell", category = "personal_defensive" },
-    { timeMs = 13000, spellId = 31884,  player = UnitName("player"), spellName = "Avenging Wrath", category = "offensive" },
+    { kind = "cd",   timeMs = 3000,  spellId = 740,   player = me, spellName = "Tranquility" },
+    { kind = "boss", timeMs = 6000,  spellId = 100,   bossType = "tank_buster", spellName = "Doom Bolt" },
+    { kind = "cd",   timeMs = 8000,  spellId = 48707, player = me, spellName = "Anti-Magic Shell" },
+    { kind = "boss", timeMs = 11000, spellId = 101,   bossType = "raid_aoe", spellName = "Shadow Nova" },
+    { kind = "cd",   timeMs = 13000, spellId = 31884, player = me, spellName = "Avenging Wrath" },
   }
   activeId = -1
   return run(demo)
