@@ -42,16 +42,34 @@ AddOns list), or tick **Load out of date AddOns**.
 | `/coolplan` or `/cp` | Open options |
 | `/coolplan edit` | Import / Export window |
 | `/coolplan list` | List imported plans |
-| `/coolplan test` | Fire a test reminder |
+| `/coolplan test` | Fire a test reminder (sound + flash) |
+| `/coolplan demo` | Preview the anticipation countdown in town (synthetic plan) |
+| `/coolplan move` | Toggle move mode (drag the HUD + queue) |
+| `/coolplan lock` | Lock frames and save positions |
 | `/coolplan testenc <encounterID>` | Dry-run a stored plan's schedule now |
 | `/coolplan stop` | Stop the active schedule |
+
+### Alerts
+
+Each cooldown shows as an **anticipation countdown**: the alert appears `lead`
+seconds before the cast with a depleting bar and a `3.. 2.. 1..` number, flips to
+**NOW** at the cast time, then clears. An **upcoming queue** lists the next few
+cooldowns with their countdowns.
 
 ### Options (`/coolplan`)
 
 - **On-screen text / Sound / TTS** — toggle each alert channel independently.
-- **Only my character's cooldowns** — filter to casts by your character (on by
-  default). Turn off to see the whole team's plan.
-- **Lead time** — fire reminders N seconds before the scheduled cast (default 3s).
+  - **TTS count down** — speak `3.. 2.. 1..` each second instead of announcing once.
+- **Only my character** — filter to casts by your character (on by default). Off
+  = show the whole team's plan.
+- **Lead time** — how many seconds before the cast the alert appears (default 4s).
+- **Sound cue** — pick a built-in sound, or set a **custom sound file** path.
+- **HUD** — scale, font size, and text color (presets).
+- **Upcoming queue** — show/hide and how many entries.
+- **Show categories** — hide/show reminders by category (e.g. turn off Offensive).
+- **Move frames / Lock** — drag the HUD and queue, then lock to save positions
+  (also `/coolplan move` and `/coolplan lock`).
+- **Demo countdown** — preview the whole thing in town without a boss.
 
 ## Editing plans
 

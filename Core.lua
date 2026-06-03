@@ -23,6 +23,7 @@ Core:SetScript("OnEvent", function(_, event, ...)
       ns.DB.Init()
     end
   elseif event == "PLAYER_LOGIN" then
+    ns.Reminders.Init()
     out("loaded. /coolplan for options, /coolplan edit to import a plan.")
   elseif event == "ENCOUNTER_START" then
     local encounterID = ...
@@ -51,6 +52,13 @@ SlashCmdList["COOLPLAN"] = function(msg)
     ns.Editor.Open()
   elseif cmd == "test" then
     ns.Reminders.Test()
+  elseif cmd == "demo" then
+    if not ns.Scheduler.StartDemo() then out("demo failed.") end
+  elseif cmd == "move" then
+    ns.Reminders.ToggleMover()
+  elseif cmd == "lock" then
+    ns.Reminders.SetLocked(true)
+    out("frames locked.")
   elseif cmd == "testenc" then
     local id = tonumber(rest)
     if id then
@@ -71,6 +79,6 @@ SlashCmdList["COOLPLAN"] = function(msg)
     end
     if n == 0 then out("no plans imported yet. /coolplan edit to paste one.") end
   else
-    out("commands: options | edit | list | test | testenc <id> | stop")
+    out("commands: options | edit | list | test | demo | move | lock | testenc <id> | stop")
   end
 end
