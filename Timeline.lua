@@ -437,7 +437,7 @@ function Timeline.BuildPage(host)
 
   local hint = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   hint:SetPoint("TOPLEFT", 8, -6)
-  hint:SetText("Pick a dungeon / boss / note to preview its cooldown timeline. Test = live playback (Shift+click = 3x).  Shift+scroll = pan ◀ ▶")
+  hint:SetText("Pick a dungeon / boss / note to preview. Test = playback (Shift+click 3x).  Scroll = zoom · Shift+scroll = pan · hover = time")
 
   -- row 1: category + dungeon/instance
   catDD = ns.Window.MakeDropdown(host, "CoolPlanTLCatDD", 100,
@@ -568,7 +568,8 @@ function Timeline.BuildPage(host)
     if scroll then scroll:SetHorizontalScroll(val) end
   end))
 
-  -- Shift+wheel drives the same horizontal scrollbar; plain wheel = vertical.
+  -- Plain wheel = zoom (MRT-style: up = zoom in / compress to fewer s/view);
+  -- Shift+wheel = pan horizontally via the scrollbar.
   scroll:EnableMouseWheel(true)
   scroll:SetScript("OnMouseWheel", ns.wrap(function(self, delta)
     if IsShiftKeyDown and IsShiftKeyDown() then
@@ -577,8 +578,10 @@ function Timeline.BuildPage(host)
         hbar:SetValue(math.min(mx or 0, math.max(0, hbar:GetValue() - delta * 80)))
       end
     else
-      local maxy = math.max(0, (canvas:GetHeight() or 0) - self:GetHeight())
-      self:SetVerticalScroll(math.min(maxy, math.max(0, self:GetVerticalScroll() - delta * 30)))
+      if delta > 0 then secondsPerView = math.max(10, secondsPerView / 1.25)
+      else secondsPerView = math.min(300, secondsPerView * 1.25) end
+      updateZoomButtons()
+      renderCanvas()
     end
   end))
 
@@ -586,6 +589,38 @@ function Timeline.BuildPage(host)
   playhead:SetWidth(2)
   playhead:SetColorTexture(1, 0.9, 0.2, 0.9)
   playhead:Hide()
+
+  -- cursor crosshair: a full-height vertical line that follows the mouse over
+  -- the timeline, with the time at the cursor shown above it. Textures don't
+  -- intercept the mouse, so marker hover-tooltips still work underneath.
+  local cline = canvas:CreateTexture(nil, "OVERLAY")
+  cline:SetWidth(1)
+  cline:SetColorTexture(0.8, 0.9, 1, 0.5)
+  cline:Hide()
+  local clabel = canvas:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  clabel:Hide()
+  local cthrottle = 0
+  scroll:SetScript("OnUpdate", ns.wrap(function(self, elapsed)
+    cthrottle = cthrottle + (elapsed or 0)
+    if cthrottle < 0.02 then return end
+    cthrottle = 0
+    if not self:IsVisible() then cline:Hide(); clabel:Hide(); return end
+    local sc = self:GetEffectiveScale()
+    local mx, my = GetCursorPosition()
+    mx, my = mx / sc, my / sc
+    local l, r, t, b = self:GetLeft(), self:GetRight(), self:GetTop(), self:GetBottom()
+    if not l or mx < l or mx > r or my < b or my > t then cline:Hide(); clabel:Hide(); return end
+    local canvasX = (mx - l) + (self:GetHorizontalScroll() or 0)
+    if canvasX < LABEL_W then cline:Hide(); clabel:Hide(); return end
+    cline:ClearAllPoints()
+    cline:SetPoint("TOPLEFT", canvas, "TOPLEFT", canvasX, canvas._gridTop or -AXIS_H)
+    cline:SetHeight(canvas._height or 60)
+    cline:Show()
+    clabel:ClearAllPoints()
+    clabel:SetPoint("BOTTOMLEFT", canvas, "TOPLEFT", canvasX + 2, (canvas._gridTop or -AXIS_H))
+    clabel:SetText(ns.Format.FormatTime(((canvasX - LABEL_W) / (canvas._pxPerSec or 8)) * 1000))
+    clabel:Show()
+  end))
 
   ensureGrpSelection()
   ensureBossSelection()

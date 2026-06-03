@@ -306,9 +306,19 @@ local function ttsVoiceId(o)
 end
 
 local function speak(text, o)
-  if not (C_VoiceChat and C_VoiceChat.SpeakText and Enum and Enum.VoiceTtsDestination) then return end
-  -- volume 100 / rate 0 are the safe, audible defaults (settings can be 0/muted).
-  C_VoiceChat.SpeakText(ttsVoiceId(o), text, Enum.VoiceTtsDestination.LocalPlayback, 0, 100)
+  if not (C_VoiceChat and C_VoiceChat.SpeakText) then return end
+  local voiceId = ttsVoiceId(o)
+  local rate = (C_TTSSettings and C_TTSSettings.GetSpeechRate and C_TTSSettings.GetSpeechRate()) or 0
+  local volume = (C_TTSSettings and C_TTSSettings.GetSpeechVolume and C_TTSSettings.GetSpeechVolume()) or 100
+  -- Retail (Midnight / Mainline) changed the signature: SpeakText DROPPED the
+  -- destination enum -> (voiceID, text, rate, volume, true). We were passing the
+  -- old form with a VoiceTtsDestination where rate goes, so the args were
+  -- misaligned and TTS silently did nothing. (Matches Method Raid Tools.)
+  if WOW_PROJECT_ID and WOW_PROJECT_MAINLINE and WOW_PROJECT_ID == WOW_PROJECT_MAINLINE then
+    C_VoiceChat.SpeakText(voiceId, text, rate, volume, true)
+  elseif Enum and Enum.VoiceTtsDestination then
+    C_VoiceChat.SpeakText(voiceId, text, Enum.VoiceTtsDestination.QueuedLocalPlayback, rate, volume)
+  end
 end
 ns.Reminders._speak = speak
 
