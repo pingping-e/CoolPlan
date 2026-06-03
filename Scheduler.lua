@@ -191,7 +191,12 @@ end
 -- the virtual clock. `onTick(elapsed, total)` drives the Timeline playhead.
 -- Honors the same filterToMe / category / showBoss options as a real pull.
 function Scheduler.StartPreview(reminders, boss, speed, onTick)
-  local cues = buildCues(reminders or {}, boss, true) -- preview the whole plan
+  -- Preview honors the live filters (only-my-character + Show categories) so it
+  -- shows what you'd actually see in the fight. If that leaves nothing (e.g.
+  -- testing on a char whose name isn't in the plan), fall back to the whole plan
+  -- so the Test is never a dead end.
+  local cues = buildCues(reminders or {}, boss, false)
+  if #cues == 0 then cues = buildCues(reminders or {}, boss, true) end
   if #cues == 0 then return false end
   activeId = -2
   return run(cues, { preview = true, speed = speed or 1, onTick = onTick })
