@@ -44,6 +44,11 @@ local function getRow(i)
   row.ren = tinyBtn(row, "Rename", 52); row.ren:SetPoint("RIGHT", row.shr, "LEFT", -3, 0)
   row.use = tinyBtn(row, "Use", 44);    row.use:SetPoint("RIGHT", row.ren, "LEFT", -3, 0)
 
+  if ns.Style then
+    ns.Style.Button(row.exp); ns.Style.Button(row.del); ns.Style.Button(row.shr)
+    ns.Style.Button(row.ren); ns.Style.Button(row.use)
+  end
+
   rows[i] = row
   return row
 end
@@ -56,7 +61,9 @@ local function promptRename(id, index, current)
     prompt:SetSize(320, 110)
     prompt:SetPoint("CENTER")
     prompt:SetFrameStrata("FULLSCREEN_DIALOG")
-    if prompt.SetBackdrop then
+    if ns.Style then
+      ns.Style.Panel(prompt, 0.98)
+    elseif prompt.SetBackdrop then
       prompt:SetBackdrop({
         bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
         edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
@@ -79,6 +86,7 @@ local function promptRename(id, index, current)
     box:SetScript("OnEnterPressed", ns.wrap(accept))
     box:SetScript("OnEscapePressed", function() prompt:Hide() end)
     cancel:SetScript("OnClick", function() prompt:Hide() end)
+    if ns.Style then ns.Style.Apply(prompt) end
   end
   prompt.id, prompt.index = id, index
   prompt.box:SetText(current or "")
@@ -313,6 +321,11 @@ function Manager.BuildPage(host)
     ensureGrpSelection()
     ensureBossSelection()
     Manager.Refresh()
+  end
+
+  if ns.Style then
+    ns.Style.Apply(host)
+    ns.Style.Dropdown(catDD); ns.Style.Dropdown(grpDD); ns.Style.Dropdown(bossDD)
   end
 end
 

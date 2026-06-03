@@ -307,7 +307,9 @@ function Comm.PromptAccept(sender, bossName, plans)
     prompt:RegisterForDrag("LeftButton")
     prompt:SetScript("OnDragStart", prompt.StartMoving)
     prompt:SetScript("OnDragStop", prompt.StopMovingOrSizing)
-    if prompt.SetBackdrop then
+    if ns.Style then
+      ns.Style.Panel(prompt, 0.98)
+    elseif prompt.SetBackdrop then
       prompt:SetBackdrop({
         bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
         edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
@@ -344,6 +346,8 @@ function Comm.PromptAccept(sender, bossName, plans)
       prompt:Hide()
       prompt._plans = nil
     end))
+
+    if ns.Style then ns.Style.Apply(prompt) end
   end
 
   prompt._sender = sender

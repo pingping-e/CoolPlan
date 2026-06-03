@@ -11,6 +11,7 @@ Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
 Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
 
 Util.lua
+Style.lua
 EncounterNames.lua
 Format.lua
 DB.lua

@@ -47,11 +47,33 @@ local function buildNav()
     hl:SetAllPoints()
     hl:SetColorTexture(1, 1, 1, 0.10)
 
+    -- hover tint to accent
+    if ns.Style then hl:SetColorTexture(ns.Style.colors.accent[1], ns.Style.colors.accent[2], ns.Style.colors.accent[3], 0.12) end
+
     local sel = btn:CreateTexture(nil, "BACKGROUND")
     sel:SetAllPoints()
-    sel:SetColorTexture(0.20, 0.45, 0.85, 0.45)
+    if ns.Style then
+      local a = ns.Style.colors.accent
+      sel:SetColorTexture(a[1], a[2], a[3], 0.22)
+    else
+      sel:SetColorTexture(0.20, 0.45, 0.85, 0.45)
+    end
     sel:Hide()
     btn.sel = sel
+
+    -- accent left bar for the active tab
+    local bar = btn:CreateTexture(nil, "ARTWORK")
+    bar:SetPoint("TOPLEFT", 0, 0)
+    bar:SetPoint("BOTTOMLEFT", 0, 0)
+    bar:SetWidth(2)
+    if ns.Style then
+      local a = ns.Style.colors.accent
+      bar:SetColorTexture(a[1], a[2], a[3], 1)
+    else
+      bar:SetColorTexture(0.20, 0.45, 0.85, 1)
+    end
+    bar:Hide()
+    btn.bar = bar
 
     local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     fs:SetPoint("LEFT", 8, 0)
@@ -65,13 +87,20 @@ local function buildNav()
 end
 
 local function highlightNav(key)
+  local accent = ns.Style and ns.Style.colors.accent
+  local text = ns.Style and ns.Style.colors.text
+  local subtle = ns.Style and ns.Style.colors.subtle
   for _, btn in ipairs(navButtons) do
     if btn.key == key then
       btn.sel:Show()
+      if btn.bar then btn.bar:Show() end
       btn.fs:SetFontObject(GameFontNormal)
+      if text then btn.fs:SetTextColor(text[1], text[2], text[3]) end
     else
       btn.sel:Hide()
+      if btn.bar then btn.bar:Hide() end
       btn.fs:SetFontObject(GameFontHighlight)
+      if subtle then btn.fs:SetTextColor(subtle[1], subtle[2], subtle[3]) end
     end
   end
 end
@@ -107,13 +136,27 @@ local function build()
     if oo then oo.windowW = math.floor(f:GetWidth() + 0.5); oo.windowH = math.floor(f:GetHeight() + 0.5) end
     if current and current.host and current.host._onResize then ns.safecall(current.host._onResize, current.host) end
   end))
-  if f.SetBackdrop then
+  if ns.Style then
+    ns.Style.Panel(f, 0.98)
+  elseif f.SetBackdrop then
     f:SetBackdrop({
       bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
       edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
       tile = true, tileSize = 32, edgeSize = 16,
       insets = { left = 4, right = 4, top = 4, bottom = 4 },
     })
+  end
+
+  -- title bar accent strip (a thin brand line under the title)
+  local titlebar = f:CreateTexture(nil, "ARTWORK")
+  titlebar:SetPoint("TOPLEFT", 12, -38)
+  titlebar:SetPoint("TOPRIGHT", -12, -38)
+  titlebar:SetHeight(1)
+  if ns.Style then
+    local a = ns.Style.colors.accent
+    titlebar:SetColorTexture(a[1], a[2], a[3], 0.5)
+  else
+    titlebar:SetColorTexture(0.2, 0.45, 0.85, 0.5)
   end
 
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -129,7 +172,9 @@ local function build()
   sidebar:SetPoint("TOPLEFT", 12, -44)
   sidebar:SetPoint("BOTTOMLEFT", 12, 14)
   sidebar:SetWidth(NAV_W)
-  if sidebar.SetBackdrop then
+  if ns.Style then
+    ns.Style.InsetPanel(sidebar, 0.85)
+  elseif sidebar.SetBackdrop then
     sidebar:SetBackdrop({
       bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
       edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",

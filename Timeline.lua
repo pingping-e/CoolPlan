@@ -636,6 +636,14 @@ function Timeline.BuildPage(host)
   end))
 
   host._onShow = function() Timeline.Refresh() end
+
+  if ns.Style then
+    ns.Style.Apply(host)
+    ns.Style.Dropdown(catDD); ns.Style.Dropdown(grpDD)
+    ns.Style.Dropdown(bossDD); ns.Style.Dropdown(noteDD)
+    ns.Style.Slider(hbar)
+    ns.Style.ScrollBar(scroll)
+  end
 end
 
 function Timeline.Open()

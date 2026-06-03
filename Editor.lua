@@ -136,6 +136,19 @@ function Editor.BuildPage(host)
     host.editbox:SetText("")
     host.status:SetText("")
   end)
+
+  if ns.Style then
+    ns.Style.Apply(host)
+    -- the multiline box is a bare EditBox (no template art): give the scroll
+    -- area a flat dark panel so it reads as an input surface.
+    local C = ns.Style.colors
+    local boxbg = sf:CreateTexture(nil, "BACKGROUND")
+    boxbg:SetPoint("TOPLEFT", -2, 2)
+    boxbg:SetPoint("BOTTOMRIGHT", 2, -2)
+    boxbg:SetColorTexture(C.bg[1], C.bg[2], C.bg[3], 0.92)
+    if eb.SetTextColor then eb:SetTextColor(C.text[1], C.text[2], C.text[3]) end
+    if status.SetTextColor then status:SetTextColor(C.subtle[1], C.subtle[2], C.subtle[3]) end
+  end
 end
 
 -- Open the Import/Export page and drop a string into the box (used by the

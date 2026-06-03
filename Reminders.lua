@@ -70,7 +70,10 @@ local function buildHud()
 
   f.bg = f:CreateTexture(nil, "BACKGROUND")
   f.bg:SetAllPoints()
-  f.bg:SetColorTexture(0, 0, 0, 0.35)
+  do
+    local p = ns.Style and ns.Style.colors.panel
+    if p then f.bg:SetColorTexture(p[1], p[2], p[3], 0.55) else f.bg:SetColorTexture(0, 0, 0, 0.35) end
+  end
   f.bg:Hide()
 
   f.icon = f:CreateTexture(nil, "ARTWORK")
@@ -94,7 +97,10 @@ local function buildHud()
   f.bar:SetValue(1)
   f.bar.bg = f.bar:CreateTexture(nil, "BACKGROUND")
   f.bar.bg:SetAllPoints()
-  f.bar.bg:SetColorTexture(0, 0, 0, 0.5)
+  do
+    local b = ns.Style and ns.Style.colors.bg
+    if b then f.bar.bg:SetColorTexture(b[1], b[2], b[3], 0.7) else f.bar.bg:SetColorTexture(0, 0, 0, 0.5) end
+  end
 
   f.label = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   f.label:SetPoint("BOTTOM", f, "TOP", 0, 2)
@@ -113,7 +119,10 @@ local function buildQueue()
 
   f.bg = f:CreateTexture(nil, "BACKGROUND")
   f.bg:SetAllPoints()
-  f.bg:SetColorTexture(0, 0, 0, 0.35)
+  do
+    local p = ns.Style and ns.Style.colors.panel
+    if p then f.bg:SetColorTexture(p[1], p[2], p[3], 0.55) else f.bg:SetColorTexture(0, 0, 0, 0.35) end
+  end
   f.bg:Hide()
 
   f.header = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")

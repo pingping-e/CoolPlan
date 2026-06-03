@@ -186,6 +186,7 @@ function Options.BuildPage(host)
       o.textColor = { r = col[1], g = col[2], b = col[3] }
       refresh()
     end))
+    sw._cpSkinned = true -- preserve the meaningful swatch color (skip auto-skin)
     cx = cx + 26
   end
 
@@ -216,6 +217,11 @@ function Options.BuildPage(host)
     if not ns.Scheduler.StartDemo() then ns.Print("demo failed.") end
   end)
   button(host, "Stop", 60, LX + 242, -440, function() ns.Scheduler.Stop() end)
+
+  if ns.Style then
+    ns.Style.Apply(host)
+    ns.Style.Dropdown(sndDD)
+  end
 end
 
 -- Back-compat: other code (and slash) call Options.Open() → open the shell page.
