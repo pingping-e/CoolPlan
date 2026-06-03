@@ -29,8 +29,15 @@ Core:SetScript("OnEvent", ns.wrap(function(_, event, ...)
     out("loaded. /coolplan to open, /coolplan import to paste a plan.")
   elseif event == "ENCOUNTER_START" then
     local encounterID = ...
+    local e = ns.DB.GetEncounter(encounterID)
     if ns.Scheduler.Start(encounterID) then
       out("reminders armed (encounter " .. tostring(encounterID) .. ").")
+    elseif e then
+      out("|cffffcc00encounter " .. tostring(encounterID) ..
+        " started — plan found but nothing to show (no active plan, or filtered out by 'only me' / hidden categories).|r")
+    else
+      out("|cffffcc00encounter " .. tostring(encounterID) ..
+        " started — no saved plan for THIS encounter id. Your plan is saved under a different id; that's why nothing fires.|r")
     end
   elseif event == "ENCOUNTER_END" then
     ns.Scheduler.Stop()
