@@ -211,15 +211,12 @@ local function layoutHud(o)
     hud:SetSize(totalW, barH + 4)
 
   elseif style == "icon" then
-    -- icon only: 52px icon + a thin depleting bar along its bottom. name hidden.
+    -- icon only: just the 52px icon with the countdown number. No bar, no name.
     icon:SetSize(ICON_SIZE, ICON_SIZE)
     icon:SetPoint("LEFT", hud, "LEFT", PAD, 0)
     icon:Show()
 
-    bar:SetPoint("TOPLEFT", icon, "BOTTOMLEFT", 0, -1)
-    bar:SetSize(ICON_SIZE, THIN_BAR_H)
-    bar:Show()
-
+    bar:Hide()
     name:Hide()
 
     local totalW = PAD + ICON_SIZE + PAD
@@ -235,18 +232,16 @@ local function layoutHud(o)
     hud:SetSize(totalW, ICON_SIZE + THIN_BAR_H + 2)
 
   else -- "iconName"
-    -- 52px icon on the left, name on the right, a thin depleting bar under the name.
+    -- 52px icon on the left, name on the right. No bar (countdown number only).
     icon:SetSize(ICON_SIZE, ICON_SIZE)
     icon:SetPoint("LEFT", hud, "LEFT", PAD, 0)
     icon:Show()
 
-    name:SetPoint("TOPLEFT", icon, "TOPRIGHT", 12, -4)
+    name:SetPoint("LEFT", icon, "RIGHT", 12, 0)
     name:SetJustifyH("LEFT")
     name:Show()
 
-    bar:SetPoint("TOPLEFT", name, "BOTTOMLEFT", 0, -4)
-    bar:SetSize(220, THIN_BAR_H)
-    bar:Show()
+    bar:Hide()
 
     local totalW = PAD + ICON_SIZE + 12 + 240 + PAD
     if tpos == "icon" then

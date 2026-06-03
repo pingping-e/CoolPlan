@@ -35,18 +35,42 @@ function Editor.BuildPage(host)
   eb:SetFontObject(ChatFontNormal)
   eb:SetAutoFocus(false)
   eb:EnableMouse(true)
-  eb:SetWidth(560)
-  eb:SetHeight(360) -- give the (empty) box a real clickable extent so it can focus
+  -- The box IS the editor: make the EditBox fill the scroll viewport (so the
+  -- whole dark area is one clickable input surface) and grow taller as text is
+  -- added. Width tracks the scroll frame; height = max(viewport, content).
   -- Plans can be many KB; lift the letter cap so a long paste isn't truncated.
   -- (Do NOT call SetMaxBytes(0) — it was blocking input on some clients.)
   if eb.SetMaxLetters then eb:SetMaxLetters(0) end
+
+  -- size the editbox to the scroll viewport; called on build, resize, text edit.
+  local function fitEditBox()
+    local vw = (sf:GetWidth() or 0)
+    local vh = (sf:GetHeight() or 0)
+    if vw < 50 then vw = 540 end
+    if vh < 50 then vh = 340 end
+    eb:SetWidth(vw)
+    -- never shorter than the viewport so the empty box is a big click target;
+    -- grow with the text's natural string height when it overflows.
+    local needed = vh
+    local sh = eb.GetStringHeight and eb:GetStringHeight() or 0
+    if sh and sh + 8 > needed then needed = sh + 8 end
+    eb:SetHeight(needed)
+  end
+
   eb:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-  eb:SetScript("OnTextChanged", function() sf:UpdateScrollChildRect() end)
+  eb:SetScript("OnTextChanged", ns.wrap(function()
+    fitEditBox()
+    sf:UpdateScrollChildRect()
+  end))
   sf:SetScrollChild(eb)
+  fitEditBox()
   -- Clicking anywhere in the scroll area (including empty space below the text)
-  -- focuses the box, so typing / Ctrl-V always lands.
+  -- focuses the box, so typing / Ctrl-V always lands. The EditBox now fills the
+  -- viewport, so a click on it focuses directly too.
   sf:EnableMouse(true)
   sf:SetScript("OnMouseDown", ns.wrap(function() eb:SetFocus() end))
+  -- keep the input area filling the box when the window is resized
+  host._onResize = ns.wrap(function() fitEditBox(); sf:UpdateScrollChildRect() end)
   host.editbox = eb
 
   local status = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")

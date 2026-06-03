@@ -8,7 +8,7 @@ ns.Scheduler = Scheduler
 
 local LINGER = 1.0
 
-local ticker, pullTime, queue, activeId
+local driver, pullTime, queue, activeId
 -- preview mode: a virtual clock advanced by `speed`x each real tick, with an
 -- optional onTick(elapsed, total) callback (used by the Timeline playhead).
 local preview = false
@@ -30,11 +30,14 @@ local function nowElapsed()
   return GetTime() - pullTime
 end
 
-local function tick()
+-- Driven every frame (OnUpdate) so bars deplete smoothly instead of stepping at
+-- a 0.1s tick. `dt` is the real frame delta; preview advances its virtual clock
+-- by dt*speed.
+local function tick(dt)
   if not queue then return end
   if (not preview) and not pullTime then return end
   local o = ns.DB.Options()
-  if preview then previewClock = previewClock + 0.1 * previewSpeed end
+  if preview then previewClock = previewClock + (dt or 0) * previewSpeed end
   local elapsed = nowElapsed()
   local lead = o.leadSeconds or 4
 
@@ -80,6 +83,11 @@ local function tick()
   end
 end
 
+-- Per-frame driver (only runs OnUpdate while shown → while a schedule is active).
+driver = CreateFrame("Frame")
+driver:Hide()
+driver:SetScript("OnUpdate", function(_, e) ns.safecall(tick, e) end)
+
 -- Run an arbitrary cue list (already filtered). Returns true if armed.
 -- opts (optional): { preview=true, speed=1, onTick=fn } for the live preview.
 local function run(cues, opts)
@@ -114,7 +122,7 @@ local function run(cues, opts)
   else
     pullTime = GetTime()
   end
-  ticker = C_Timer.NewTicker(0.1, ns.wrap(tick))
+  driver:Show()
   return true
 end
 
@@ -180,7 +188,7 @@ function Scheduler.StartDemo()
 end
 
 function Scheduler.Stop()
-  if ticker then ticker:Cancel(); ticker = nil end
+  if driver then driver:Hide() end
   queue, pullTime, activeId = nil, nil, nil
   preview, previewClock, previewSpeed, previewTotal, previewOnTick = false, 0, 1, 0, nil
   if ns.Reminders then ns.Reminders.Clear() end
@@ -207,7 +215,7 @@ function Scheduler.IsPreview()
 end
 
 function Scheduler.IsActive()
-  return ticker ~= nil
+  return (driver and driver:IsShown()) or false
 end
 
 function Scheduler.ActiveEncounter()

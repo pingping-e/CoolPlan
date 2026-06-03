@@ -341,6 +341,38 @@ function Window.MakeDropdown(parent, name, width, getItems, onSelect)
   UIDropDownMenu_SetWidth(dd, width or 160)
   UIDropDownMenu_JustifyText(dd, "LEFT")
 
+  -- Whole-box click: the stock template only opens when the small arrow button
+  -- is clicked. Lay a transparent button over the visible field area so a click
+  -- anywhere in the box toggles the menu. The arrow button keeps working too.
+  do
+    local ddName = dd.GetName and dd:GetName()
+    local arrow = ddName and _G[ddName .. "Button"]
+    local hit = CreateFrame("Button", nil, dd)
+    -- cover the visible field: the template pads ~16px left and the arrow sits
+    -- on the right, so span between them. Leave the arrow itself clickable.
+    hit:SetPoint("TOPLEFT", dd, "TOPLEFT", 16, -2)
+    hit:SetPoint("BOTTOMRIGHT", dd, "BOTTOMRIGHT", -16, 2)
+    hit:SetFrameLevel((dd:GetFrameLevel() or 1) + 1)
+    hit:RegisterForClicks("LeftButtonUp")
+    hit:SetScript("OnClick", ns.wrap(function()
+      if arrow and arrow.Click then
+        arrow:Click()        -- reuse the template's own toggle logic
+      else
+        ToggleDropDownMenu(1, nil, dd, dd, 0, 0)
+      end
+    end))
+    -- subtle hover tint across the whole box (matches Style accent)
+    local hl = hit:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints()
+    if ns.Style then
+      local a = ns.Style.colors.accent
+      hl:SetColorTexture(a[1], a[2], a[3], 0.12)
+    else
+      hl:SetColorTexture(1, 1, 1, 0.08)
+    end
+    dd._hit = hit
+  end
+
   -- programmatically set value + display text without firing onSelect
   function dd:SetValue(value, text)
     self._value = value

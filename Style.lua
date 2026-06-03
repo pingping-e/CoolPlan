@@ -309,6 +309,16 @@ function Style.Dropdown(dd)
   local btn = _G[name .. "Button"]
   if btn and has(btn, "GetNormalTexture") and btn:GetNormalTexture() then
     btn:GetNormalTexture():SetVertexColor(C.accent[1], C.accent[2], C.accent[3])
+    -- align the arrow to the flat bg's right edge + center it vertically. The
+    -- stock template anchors the arrow ~16px off the frame's right; our bg ends
+    -- at -18, so nudge the arrow to sit just inside the box. Guarded.
+    if has(btn, "ClearAllPoints") and has(btn, "SetPoint") then
+      pcall(function()
+        btn:ClearAllPoints()
+        btn:SetPoint("RIGHT", bg, "RIGHT", 2, 0)
+      end)
+    end
+    if has(btn, "SetSize") then pcall(btn.SetSize, btn, 20, 20) end
   end
   dd._cpSkinned = true
 end

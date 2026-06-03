@@ -115,9 +115,21 @@ end
 function Options.BuildPage(host)
   local o = ns.DB.Options()
 
-  -- two roomy columns with extra gutter
+  -- Left column anchors to the host's top-left (TOPLEFT offsets, as before).
+  -- Right column lives in a container pinned to the host's TOP-RIGHT so it
+  -- follows the window edge when the shell is resized (instead of a fixed RX).
   local LX = 16
-  local RX = 440
+
+  -- right-column container: a fixed-width strip hugging the right edge. Widgets
+  -- inside use small TOPLEFT offsets, so RX becomes a local origin (≈8) and the
+  -- whole column tracks the window width.
+  local RCOL_W = 240
+  local rcol = CreateFrame("Frame", nil, host)
+  rcol:SetPoint("TOPRIGHT", host, "TOPRIGHT", -8, 0)
+  rcol:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", -8, 0)
+  rcol:SetWidth(RCOL_W)
+  -- local origin inside the right column (keeps the original ~16px inset feel)
+  local RX = 8
 
   -- forward refs so the alert-mode dropdown can enable/disable the dependent rows
   local sndDD, voiceDD
@@ -231,19 +243,19 @@ function Options.BuildPage(host)
   slider(host, "Sound/TTS lead (s)", LX, -340, 0, 10, 1,
     function() return o.soundLeadSeconds or 0 end, function(v) o.soundLeadSeconds = v end)
 
-  -- ── right column: HUD ──
-  header(host, "HUD", RX, -8)
-  slider(host, "Scale (%)", RX, -32, 50, 200, 5,
+  -- ── right column: HUD ── (parented to rcol → tracks the window's right edge)
+  header(rcol, "HUD", RX, -8)
+  slider(rcol, "Scale (%)", RX, -32, 50, 200, 5,
     function() return math.floor((o.scale or 1) * 100) end,
     function(v) o.scale = v / 100 end)
-  slider(host, "Font size", RX, -86, 12, 48, 1,
+  slider(rcol, "Font size", RX, -86, 12, 48, 1,
     function() return o.fontSize or 28 end, function(v) o.fontSize = v end)
 
   -- HUD display style (icon only / icon + name / bar)
-  local styleLabel = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  local styleLabel = rcol:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   styleLabel:SetPoint("TOPLEFT", RX, -132)
   styleLabel:SetText("Display style:")
-  styleDD = ns.Window.MakeDropdown(host, "CoolPlanOptStyleDD", 200,
+  styleDD = ns.Window.MakeDropdown(rcol, "CoolPlanOptStyleDD", 200,
     function()
       return {
         { text = hudStyleLabel("icon"),     value = "icon" },
@@ -259,10 +271,10 @@ function Options.BuildPage(host)
   styleDD:SetValue(o.hudStyle or "iconName", hudStyleLabel(o.hudStyle))
 
   -- time (countdown) position (inside the icon/bar / separate on the right)
-  local timePosLbl = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  local timePosLbl = rcol:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   timePosLbl:SetPoint("TOPLEFT", RX, -188)
   timePosLbl:SetText("Time position:")
-  timePosDD = ns.Window.MakeDropdown(host, "CoolPlanOptTimePosDD", 200,
+  timePosDD = ns.Window.MakeDropdown(rcol, "CoolPlanOptTimePosDD", 200,
     function()
       return {
         { text = timePosLabel("icon"),  value = "icon" },
@@ -276,12 +288,12 @@ function Options.BuildPage(host)
   timePosDD:SetPoint("TOPLEFT", RX - 8, -206)
   timePosDD:SetValue(o.timePos or "icon", timePosLabel(o.timePos))
 
-  local colorLabel = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  local colorLabel = rcol:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   colorLabel:SetPoint("TOPLEFT", RX, -244)
   colorLabel:SetText("Text color:")
   local cx = RX
   for _, col in ipairs(COLORS) do
-    local sw = CreateFrame("Button", nil, host)
+    local sw = CreateFrame("Button", nil, rcol)
     sw:SetSize(22, 22)
     sw:SetPoint("TOPLEFT", cx, -262)
     local tex = sw:CreateTexture(nil, "ARTWORK")
@@ -296,18 +308,18 @@ function Options.BuildPage(host)
   end
 
   -- ── right column: queue ──
-  header(host, "Upcoming queue", RX, -298)
-  checkbox(host, "Show queue", RX, -322,
+  header(rcol, "Upcoming queue", RX, -298)
+  checkbox(rcol, "Show queue", RX, -322,
     function() return o.showQueue end, function(v) o.showQueue = v end)
-  slider(host, "Queue size", RX, -350, 1, 6, 1,
+  slider(rcol, "Queue size", RX, -350, 1, 6, 1,
     function() return o.queueCount or 3 end, function(v) o.queueCount = v end)
-  checkbox(host, "Show boss mechanics", RX, -404,
+  checkbox(rcol, "Show boss mechanics", RX, -404,
     function() return o.showBoss end, function(v) o.showBoss = v end)
 
   -- ── right column: position ──
-  header(host, "Position", RX, -438)
-  button(host, "Move frames", 120, RX, -460, function() ns.Reminders.ToggleMover() end)
-  button(host, "Lock", 70, RX + 128, -460, function() ns.Reminders.SetLocked(true) end)
+  header(rcol, "Position", RX, -438)
+  button(rcol, "Move frames", 120, RX, -460, function() ns.Reminders.ToggleMover() end)
+  button(rcol, "Lock", 70, RX + 128, -460, function() ns.Reminders.SetLocked(true) end)
 
   -- ── categories (full width, roomy 3-col grid) ──
   header(host, "Show categories", LX, -404)

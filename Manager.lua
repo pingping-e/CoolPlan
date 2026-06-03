@@ -9,7 +9,7 @@ local Manager = {}
 ns.Manager = Manager
 
 local ROW_H = 24
-local CONTENT_W = 500
+local CONTENT_W = 520
 
 local page, content, empty, header
 local catDD, grpDD, bossDD
@@ -33,16 +33,20 @@ local function getRow(i)
   local row = CreateFrame("Frame", nil, content)
   row:SetSize(CONTENT_W, 22)
 
+  -- left label gets the space the action buttons don't use (button cluster ≈
+  -- 5 buttons + roomy 7px gaps); keep it from crowding the first button.
   row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   row.text:SetPoint("LEFT", 4, 0)
   row.text:SetJustifyH("LEFT")
-  row.text:SetWidth(200)
+  row.text:SetWidth(170)
 
-  row.exp = tinyBtn(row, "Export", 52); row.exp:SetPoint("RIGHT", -2, 0)
-  row.del = tinyBtn(row, "Delete", 52); row.del:SetPoint("RIGHT", row.exp, "LEFT", -3, 0)
-  row.shr = tinyBtn(row, "Share", 48);  row.shr:SetPoint("RIGHT", row.del, "LEFT", -3, 0)
-  row.ren = tinyBtn(row, "Rename", 52); row.ren:SetPoint("RIGHT", row.shr, "LEFT", -3, 0)
-  row.use = tinyBtn(row, "Use", 44);    row.use:SetPoint("RIGHT", row.ren, "LEFT", -3, 0)
+  -- 7px gaps so the actions read as separate buttons instead of one strip.
+  local GAP = 7
+  row.exp = tinyBtn(row, "Export", 54); row.exp:SetPoint("RIGHT", -4, 0)
+  row.del = tinyBtn(row, "Delete", 54); row.del:SetPoint("RIGHT", row.exp, "LEFT", -GAP, 0)
+  row.shr = tinyBtn(row, "Share", 50);  row.shr:SetPoint("RIGHT", row.del, "LEFT", -GAP, 0)
+  row.ren = tinyBtn(row, "Rename", 56); row.ren:SetPoint("RIGHT", row.shr, "LEFT", -GAP, 0)
+  row.use = tinyBtn(row, "Use", 48);    row.use:SetPoint("RIGHT", row.ren, "LEFT", -GAP, 0)
 
   if ns.Style then
     ns.Style.Button(row.exp); ns.Style.Button(row.del); ns.Style.Button(row.shr)

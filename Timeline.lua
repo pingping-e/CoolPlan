@@ -520,11 +520,14 @@ function Timeline.BuildPage(host)
     end)
   noteDD:SetPoint("LEFT", bossDD, "RIGHT", 2, 0)
 
-  -- Test / Stop button (its own spot, with a hover tooltip explaining the speeds)
+  -- Test / Stop button — pin to the host's right edge (row 2) so it follows the
+  -- window width and never gets clipped when the shell is narrowed. It sits to
+  -- the right of noteDD; on a wide window there's a gap, on a narrow one they
+  -- stay clear (noteDD is left-anchored, Test is right-anchored).
   testBtn = CreateFrame("Button", nil, host, "UIPanelButtonTemplate")
   testBtn:SetSize(80, 22)
   testBtn:SetText("Test")
-  testBtn:SetPoint("LEFT", noteDD, "RIGHT", 6, 2)
+  testBtn:SetPoint("TOPRIGHT", host, "TOPRIGHT", -8, -54)
   testBtn:SetScript("OnClick", ns.wrap(onTestClick))
   testBtn:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_TOP")
