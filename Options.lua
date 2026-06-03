@@ -334,14 +334,16 @@ function Options.BuildPage(host)
     if col % 3 == 0 then gx = LX; gy = gy - 28 else gx = gx + 200 end
   end
 
-  -- ── bottom buttons (no Saved Plans / Import — the sidebar replaces them) ──
-  -- Moved down to -556 so the 4th category row (10 categories → 4 rows, last
-  -- row at gy=-512) clears the buttons.
-  button(host, "Test alert", 110, LX, -556, function() ns.Reminders.Test() end)
-  button(host, "Demo countdown", 140, LX + 118, -556, function()
+  -- ── bottom buttons — pinned to the host's BOTTOM so they're always visible
+  -- (responsive to window height) and never clip below the category grid.
+  local testB = button(host, "Test alert", 110, 0, 0, function() ns.Reminders.Test() end)
+  testB:ClearAllPoints(); testB:SetPoint("BOTTOMLEFT", host, "BOTTOMLEFT", LX, 10)
+  local demoB = button(host, "Demo countdown", 140, 0, 0, function()
     if not ns.Scheduler.StartDemo() then ns.Print("demo failed.") end
   end)
-  button(host, "Stop", 70, LX + 266, -556, function() ns.Scheduler.Stop() end)
+  demoB:ClearAllPoints(); demoB:SetPoint("LEFT", testB, "RIGHT", 8, 0)
+  local stopB = button(host, "Stop", 70, 0, 0, function() ns.Scheduler.Stop() end)
+  stopB:ClearAllPoints(); stopB:SetPoint("LEFT", demoB, "RIGHT", 8, 0)
 
   if ns.Style then
     ns.Style.Apply(host)

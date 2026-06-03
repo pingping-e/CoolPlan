@@ -108,7 +108,9 @@ end
 local function build()
   local o = ns.DB and ns.DB.Options and ns.DB.Options()
   local f = CreateFrame("Frame", "CoolPlanWindow", UIParent, "BackdropTemplate")
-  f:SetSize((o and o.windowW) or 720, (o and o.windowH) or 520)
+  -- clamp the saved size up to the minimum so the content-heavy Options page
+  -- never opens smaller than it can lay out.
+  f:SetSize(math.max((o and o.windowW) or 860, 760), math.max((o and o.windowH) or 640, 620))
   f:SetPoint("CENTER")
   f:SetFrameStrata("DIALOG")
   f:SetMovable(true)
@@ -121,8 +123,8 @@ local function build()
   -- resizable from a bottom-right grip; the sidebar/content use anchored points
   -- so they reflow automatically. Size is saved across sessions.
   f:SetResizable(true)
-  if f.SetResizeBounds then f:SetResizeBounds(560, 380)
-  elseif f.SetMinResize then f:SetMinResize(560, 380) end
+  if f.SetResizeBounds then f:SetResizeBounds(760, 620)
+  elseif f.SetMinResize then f:SetMinResize(760, 620) end
   local grip = CreateFrame("Button", nil, f)
   grip:SetSize(16, 16)
   grip:SetPoint("BOTTOMRIGHT", -4, 4)

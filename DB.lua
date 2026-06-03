@@ -35,7 +35,7 @@ local defaults = {
     queueAnchor = { point = "CENTER", relPoint = "CENTER", x = 0, y = 60, locked = true },
     lastPage = "timeline",
     minimap = { angle = 210, hide = false },
-    windowW = 860, windowH = 600,
+    windowW = 860, windowH = 640,
   },
 }
 
