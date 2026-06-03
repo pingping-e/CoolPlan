@@ -61,6 +61,10 @@ local function build()
   eb:SetFontObject(ChatFontNormal)
   eb:SetAutoFocus(false)
   eb:SetWidth(520)
+  -- Plans can be many KB; without lifting the caps WoW truncates a long paste
+  -- (the symptom was an imported plan keeping only its [encounter] header).
+  if eb.SetMaxLetters then eb:SetMaxLetters(0) end
+  if eb.SetMaxBytes then eb:SetMaxBytes(0) end
   eb:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
   eb:SetScript("OnTextChanged", function() sf:UpdateScrollChildRect() end)
   sf:SetScrollChild(eb)
@@ -98,15 +102,23 @@ local function build()
     local typed = f.nameBox:GetText()
     if typed == "" then typed = nil end
 
-    local added, bossOnly = 0, 0
+    local added, bossOnly, nRem, nBoss = 0, 0, 0, 0
     for id, parsed in pairs(plans) do
       local label = (nEnc == 1) and typed or nil
+      nRem = nRem + (parsed.reminders and #parsed.reminders or 0)
+      nBoss = nBoss + (parsed.boss and #parsed.boss or 0)
       local idx = ns.DB.AddPlan(id, parsed.name, label, parsed.reminders, parsed.boss)
       if idx == 0 then bossOnly = bossOnly + 1 else added = added + 1 end
     end
     f.nameBox:SetText("")
-    f.status:SetText(("|cff66ff66Added %d plan(s)%s.|r"):format(
-      added, bossOnly > 0 and (", refreshed %d boss timeline(s)"):format(bossOnly) or ""))
+    if nRem == 0 and bossOnly == 0 then
+      -- parsed an encounter but zero cooldown rows: almost always a truncated paste.
+      f.status:SetText(("|cffffcc00Added %d plan(s) but 0 cooldowns parsed — the paste may be truncated (text length %d). Re-copy from the site and paste again.|r"):format(
+        added, #f.editbox:GetText()))
+    else
+      f.status:SetText(("|cff66ff66Added %d plan(s): %d cooldowns, %d boss cues%s.|r"):format(
+        added, nRem, nBoss, bossOnly > 0 and (" (%d boss-only)"):format(bossOnly) or ""))
+    end
     if ns.Manager then ns.Manager.Refresh() end
   end))
 
