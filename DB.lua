@@ -12,8 +12,8 @@ local _, ns = ...
 local DB = {}
 ns.DB = DB
 
+-- account-wide defaults (the saved-plan library is per-character; see DB.Init).
 local defaults = {
-  library = {},
   options = {
     filterToMe = true,
     leadSeconds = 4,          -- on-screen anticipation lead (seconds before cast)
@@ -51,12 +51,14 @@ local function deepFill(dst, src)
 end
 
 function DB.Init()
-  CoolPlanDB = CoolPlanDB or {}
-  -- migrate the old single-plan-per-encounter storage → library
-  if CoolPlanDB.plans and not CoolPlanDB.library then
-    CoolPlanDB.library = {}
+  CoolPlanDB = CoolPlanDB or {}        -- account-wide: options
+  CoolPlanCharDB = CoolPlanCharDB or {} -- PER CHARACTER: the saved-plan library
+  CoolPlanCharDB.library = CoolPlanCharDB.library or {}
+
+  -- legacy: the very old single-plan-per-encounter storage → library
+  if CoolPlanDB.plans then
     for id, p in pairs(CoolPlanDB.plans) do
-      CoolPlanDB.library[id] = {
+      CoolPlanCharDB.library[id] = CoolPlanCharDB.library[id] or {
         name = p.name,
         boss = p.boss,
         plans = { { label = "Imported", reminders = p.reminders or {} } },
@@ -64,6 +66,17 @@ function DB.Init()
       }
     end
     CoolPlanDB.plans = nil
+  end
+
+  -- Notes are now PER CHARACTER. Move a pre-existing ACCOUNT-wide library onto
+  -- this character once (the char you imported on keeps the data; other chars
+  -- start empty). Done a single time, then the account copy is dropped.
+  if CoolPlanDB.library and not CoolPlanDB._libToChar then
+    if next(CoolPlanCharDB.library) == nil then
+      CoolPlanCharDB.library = CoolPlanDB.library
+    end
+    CoolPlanDB.library = nil
+    CoolPlanDB._libToChar = true
   end
   -- One-time: derive the new single alert mode from the OLD soundEnabled/
   -- ttsEnabled checkboxes (run BEFORE deepFill so we read the user's old values,
@@ -105,11 +118,11 @@ function DB.Init()
 end
 
 function DB.Options() return CoolPlanDB.options end
-function DB.Library() return CoolPlanDB.library end
-function DB.GetEncounter(id) return CoolPlanDB.library[id] end
+function DB.Library() return CoolPlanCharDB.library end
+function DB.GetEncounter(id) return CoolPlanCharDB.library[id] end
 
 function DB.ActiveReminders(id)
-  local e = CoolPlanDB.library[id]
+  local e = CoolPlanCharDB.library[id]
   if not e then return nil end
   local p = e.plans[e.active]
   return p and p.reminders or {}
@@ -124,7 +137,7 @@ end
 -- Add a plan to an encounter (or just refresh the boss timeline). Returns the
 -- new plan index, or 0 when the import was a boss-timeline-only payload.
 function DB.AddPlan(id, encName, label, reminders, boss)
-  local lib = CoolPlanDB.library
+  local lib = CoolPlanCharDB.library
   local e = lib[id]
   if not e then
     e = { name = encName or ("Encounter " .. id), boss = nil, plans = {}, active = 0 }
@@ -146,23 +159,23 @@ function DB.AddPlan(id, encName, label, reminders, boss)
 end
 
 function DB.SetActive(id, index)
-  local e = CoolPlanDB.library[id]
+  local e = CoolPlanCharDB.library[id]
   if e and e.plans[index] then e.active = index end
 end
 
 function DB.RenamePlan(id, index, label)
-  local e = CoolPlanDB.library[id]
+  local e = CoolPlanCharDB.library[id]
   if e and e.plans[index] and label and label ~= "" then e.plans[index].label = label end
 end
 
 local function pruneIfEmpty(id, e)
   if #e.plans == 0 and not (e.boss and #e.boss > 0) then
-    CoolPlanDB.library[id] = nil
+    CoolPlanCharDB.library[id] = nil
   end
 end
 
 function DB.DeletePlan(id, index)
-  local e = CoolPlanDB.library[id]
+  local e = CoolPlanCharDB.library[id]
   if not e or not e.plans[index] then return end
   table.remove(e.plans, index)
   if e.active > #e.plans then e.active = #e.plans end
@@ -171,7 +184,7 @@ function DB.DeletePlan(id, index)
 end
 
 function DB.DeleteBoss(id)
-  local e = CoolPlanDB.library[id]
+  local e = CoolPlanCharDB.library[id]
   if not e then return end
   e.boss = nil
   pruneIfEmpty(id, e)
@@ -181,7 +194,7 @@ end
 -- onlyId / onlyIndex narrow it to a single encounter / plan (for per-row export).
 function DB.ToSerializable(onlyId, onlyIndex)
   local out = {}
-  for id, e in pairs(CoolPlanDB.library) do
+  for id, e in pairs(CoolPlanCharDB.library) do
     if (not onlyId) or id == onlyId then
       local idx = onlyIndex or e.active
       local p = e.plans[idx]

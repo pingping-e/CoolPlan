@@ -4,6 +4,7 @@
 ## Author: pingping-e
 ## Version: 0.1.0
 ## SavedVariables: CoolPlanDB
+## SavedVariablesPerCharacter: CoolPlanCharDB
 ## X-Website: https://coolplan.team
 
 Libs\LibStub\LibStub.lua
