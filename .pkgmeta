@@ -1,0 +1,6 @@
+# CurseForge / BigWigsMods packager config.
+# The addon ships its own libs under Libs/ (no externals), so packaging is just
+# this folder zipped as "CoolPlan".
+package-as: CoolPlan
+
+enable-nolib-creation: no
