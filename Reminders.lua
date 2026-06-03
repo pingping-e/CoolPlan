@@ -344,10 +344,19 @@ function Reminders.Test()
   local cue = { kind = "cd", spellId = 740, alert = "CoolPlan test" }
   Reminders.Cue(cue, o)
   -- Cue only speaks when ttsCountdown is off; force a spoken sample on Test so
-  -- enabling TTS always gives audible feedback (or a clear "no voice" notice).
+  -- enabling TTS always gives audible feedback.
   if o.ttsEnabled and o.ttsCountdown then speak("CoolPlan test", o) end
-  if o.ttsEnabled and not (C_VoiceChat and C_VoiceChat.SpeakText) then
-    ns.Print("|cffffcc00TTS unavailable on this client (C_VoiceChat.SpeakText missing).|r")
+  -- TTS diagnostic so we can see WHY it's silent (API missing vs. no voices).
+  if o.ttsEnabled then
+    local nVoices = 0
+    if C_VoiceChat and C_VoiceChat.GetTtsVoices then
+      local v = C_VoiceChat.GetTtsVoices(); nVoices = (v and #v) or 0
+    end
+    local hasApi = (C_VoiceChat and C_VoiceChat.SpeakText) ~= nil
+    ns.Print(("TTS: api=%s, voices=%d, voiceId=%s%s"):format(
+      tostring(hasApi), nVoices, tostring(ttsVoiceId(o)),
+      (not hasApi) and " |cffff6666(client has no TTS API)|r"
+        or (nVoices == 0 and " |cffff6666(no voices — add one in Windows Speech settings, then /reload)|r" or "")))
   end
   Reminders.RenderTick({ cue = cue, remaining = 0, total = o.leadSeconds }, nil, o)
   C_Timer.After(1.5, function() Reminders.Clear() end)

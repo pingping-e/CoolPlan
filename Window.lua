@@ -77,8 +77,9 @@ local function highlightNav(key)
 end
 
 local function build()
+  local o = ns.DB and ns.DB.Options and ns.DB.Options()
   local f = CreateFrame("Frame", "CoolPlanWindow", UIParent, "BackdropTemplate")
-  f:SetSize(720, 520)
+  f:SetSize((o and o.windowW) or 720, (o and o.windowH) or 520)
   f:SetPoint("CENTER")
   f:SetFrameStrata("DIALOG")
   f:SetMovable(true)
@@ -87,6 +88,25 @@ local function build()
   f:SetScript("OnDragStart", f.StartMoving)
   f:SetScript("OnDragStop", f.StopMovingOrSizing)
   f:SetClampedToScreen(true)
+
+  -- resizable from a bottom-right grip; the sidebar/content use anchored points
+  -- so they reflow automatically. Size is saved across sessions.
+  f:SetResizable(true)
+  if f.SetResizeBounds then f:SetResizeBounds(560, 380)
+  elseif f.SetMinResize then f:SetMinResize(560, 380) end
+  local grip = CreateFrame("Button", nil, f)
+  grip:SetSize(16, 16)
+  grip:SetPoint("BOTTOMRIGHT", -4, 4)
+  grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+  grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+  grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+  grip:SetScript("OnMouseDown", ns.wrap(function() f:StartSizing("BOTTOMRIGHT") end))
+  grip:SetScript("OnMouseUp", ns.wrap(function()
+    f:StopMovingOrSizing()
+    local oo = ns.DB and ns.DB.Options and ns.DB.Options()
+    if oo then oo.windowW = math.floor(f:GetWidth() + 0.5); oo.windowH = math.floor(f:GetHeight() + 0.5) end
+    if current and current.host and current.host._onResize then ns.safecall(current.host._onResize, current.host) end
+  end))
   if f.SetBackdrop then
     f:SetBackdrop({
       bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",

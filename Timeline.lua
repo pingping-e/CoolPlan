@@ -305,7 +305,7 @@ function Timeline.BuildPage(host)
 
   local hint = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   hint:SetPoint("TOPLEFT", 8, -6)
-  hint:SetText("Pick a saved note to preview its cooldown timeline. Test = live playback (Shift+click = 3x).")
+  hint:SetText("Pick a saved note to preview its cooldown timeline. Test = live playback (Shift+click = 3x).  Shift+scroll = pan ◀ ▶")
 
   -- category dropdown
   catDD = ns.Window.MakeDropdown(host, "CoolPlanTLCatDD", 110,
@@ -337,31 +337,55 @@ function Timeline.BuildPage(host)
     end)
   encDD:SetPoint("LEFT", catDD, "RIGHT", 2, 0)
 
-  noteDD = ns.Window.MakeDropdown(host, "CoolPlanTLNoteDD", 150, noteItems,
+  -- second row: note dropdown + its own Test button (kept off the first row so
+  -- the three dropdowns never overflow the page to the right)
+  noteDD = ns.Window.MakeDropdown(host, "CoolPlanTLNoteDD", 180, noteItems,
     function(idx)
       selNote = idx
       renderCanvas()
     end)
-  noteDD:SetPoint("LEFT", encDD, "RIGHT", 2, 0)
+  noteDD:SetPoint("TOPLEFT", -8, -54)
 
-  -- Test / Stop button
+  -- Test / Stop button (its own spot, with a hover tooltip explaining the speeds)
   testBtn = CreateFrame("Button", nil, host, "UIPanelButtonTemplate")
-  testBtn:SetSize(80, 22)
+  testBtn:SetSize(90, 22)
   testBtn:SetText("Test")
-  testBtn:SetPoint("TOPRIGHT", -8, -26)
+  testBtn:SetPoint("LEFT", noteDD, "RIGHT", 6, 2)
   testBtn:SetScript("OnClick", ns.wrap(onTestClick))
+  testBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine("Test playback")
+    GameTooltip:AddLine("Click = play at 1x", 0.8, 0.8, 0.8)
+    GameTooltip:AddLine("Shift + Click = play at 3x", 0.8, 0.8, 0.8)
+    GameTooltip:AddLine("Click again while playing = stop", 0.8, 0.8, 0.8)
+    GameTooltip:Show()
+  end)
+  testBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
   status = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  status:SetPoint("TOPLEFT", 8, -54)
+  status:SetPoint("TOPLEFT", 8, -84)
 
   -- scrollable canvas
   scroll = CreateFrame("ScrollFrame", "CoolPlanTimelineScroll", host, "UIPanelScrollFrameTemplate")
-  scroll:SetPoint("TOPLEFT", 8, -74)
+  scroll:SetPoint("TOPLEFT", 8, -102)
   scroll:SetPoint("BOTTOMRIGHT", -28, 12)
 
   canvas = CreateFrame("Frame", "CoolPlanTimelineCanvas", scroll)
   canvas:SetSize(600, 60)
   scroll:SetScrollChild(canvas)
+
+  -- horizontal pan with Shift+wheel (the timeline is usually far wider than the
+  -- view); plain wheel scrolls vertically.
+  scroll:EnableMouseWheel(true)
+  scroll:SetScript("OnMouseWheel", ns.wrap(function(self, delta)
+    if IsShiftKeyDown and IsShiftKeyDown() then
+      local maxx = math.max(0, (canvas:GetWidth() or 0) - self:GetWidth())
+      self:SetHorizontalScroll(math.min(maxx, math.max(0, self:GetHorizontalScroll() - delta * 80)))
+    else
+      local maxy = math.max(0, (canvas:GetHeight() or 0) - self:GetHeight())
+      self:SetVerticalScroll(math.min(maxy, math.max(0, self:GetVerticalScroll() - delta * 30)))
+    end
+  end))
 
   playhead = canvas:CreateTexture(nil, "OVERLAY")
   playhead:SetWidth(2)
@@ -371,6 +395,9 @@ function Timeline.BuildPage(host)
   ensureEncSelection()
   refreshNoteDD()
   renderCanvas()
+
+  -- re-fit the canvas min-width when the window is resized
+  host._onResize = function() renderCanvas() end
 
   -- stop any running preview when the page is hidden
   host:SetScript("OnHide", ns.wrap(function()

@@ -35,6 +35,7 @@ local defaults = {
     queueAnchor = { point = "CENTER", relPoint = "CENTER", x = 0, y = 60, locked = true },
     lastPage = "timeline",
     minimap = { angle = 210, hide = false },
+    windowW = 720, windowH = 520,
   },
 }
 
@@ -65,6 +66,12 @@ function DB.Init()
     CoolPlanDB.plans = nil
   end
   deepFill(CoolPlanDB, defaults)
+  -- One-time: boss mechanics are now OFF by default in on-screen alerts. Flip an
+  -- existing saved 'true' once (users can re-enable via Options afterwards).
+  if not CoolPlanDB._migrShowBossOff then
+    CoolPlanDB.options.showBoss = false
+    CoolPlanDB._migrShowBossOff = true
+  end
   DB.data = CoolPlanDB
   return CoolPlanDB
 end
