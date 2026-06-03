@@ -16,7 +16,8 @@ end
 
 local function sanitize(s)
   if s == nil then return "" end
-  return (tostring(s):gsub("[|\r\n]+", " "):gsub("^%s+", ""):gsub("%s+$", ""))
+  -- Strip the delimiter ';', the WoW escape char '|', and newlines.
+  return (tostring(s):gsub("[;|\r\n]+", " "):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
 -- ms -> "M:SS.T"
@@ -50,9 +51,12 @@ local function splitLines(text)
   return out
 end
 
-local function splitPipe(s)
+-- Split a row into fields on ';' (current) or '|' (legacy). Normalize the old
+-- pipe delimiter to ';' first so a single pass handles both.
+local function splitFields(s)
+  s = s:gsub("|", ";")
   local t = {}
-  for field in (s .. "|"):gmatch("(.-)|") do
+  for field in (s .. ";"):gmatch("(.-);") do
     t[#t + 1] = field
   end
   return t
@@ -97,7 +101,7 @@ function Format.Serialize(plans, meta)
       while n > 3 and fields[n] == "" do n = n - 1 end
       local row = {}
       for k = 1, n do row[k] = fields[k] end
-      lines[#lines + 1] = table.concat(row, "|")
+      lines[#lines + 1] = table.concat(row, ";")
     end
 
     if enc.boss then
@@ -110,7 +114,7 @@ function Format.Serialize(plans, meta)
         while n > 3 and fields[n] == "" do n = n - 1 end
         local row = {}
         for k = 1, n do row[k] = fields[k] end
-        lines[#lines + 1] = table.concat(row, "|")
+        lines[#lines + 1] = table.concat(row, ";")
       end
     end
   end
@@ -154,7 +158,7 @@ function Format.Parse(text)
         current = { name = trim(name), reminders = {} }
         plans[tonumber(id)] = current
       else
-        local f = splitPipe(line)
+        local f = splitFields(line)
         if current and trim(f[1]) == "@boss" then
           -- boss ability row: @boss | time | spellId | type? | spellName?
           local sid = tonumber(f[3])
