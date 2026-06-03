@@ -1,0 +1,27 @@
+# Builds + uploads to CurseForge when you push a version tag.
+#   git tag v0.1.1 && git push origin v0.1.1
+#
+# Requires (on the CoolPlan repo):
+#   - Settings > Secrets > Actions: CF_API_KEY  (CurseForge API token)
+#   - CoolPlan.toc:  ## X-Curse-Project-ID: 1563905   (already set)
+# The BigWigsMods packager reads .pkgmeta (package-as: CoolPlan).
+name: Package and release
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package and release
+        uses: BigWigsMods/packager@v2
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
