@@ -321,7 +321,7 @@ local function startTest(speed)
   local ok = ns.Scheduler.StartPreview(p.reminders, e and e.boss, speed,
     function(elapsed) setPlayhead(elapsed) end)
   if not ok then
-    if status then status:SetText("|cffffcc00Nothing to play (filtered out by 'only me' / categories?).|r") end
+    if status then status:SetText("|cffffcc00Nothing to play — this note has no cooldowns. Pick another boss / note above.|r") end
     return
   end
   if testBtn then testBtn:SetText("Stop") end

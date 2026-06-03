@@ -127,13 +127,16 @@ local ALWAYS_SHOWN = { raid_defensive = true }
 -- Build the combined cue list:
 --  • cooldowns (kind="cd")  — raid_defensive shown to all; others "only me" + enabled categories
 --  • boss mechanics (kind="boss") — only when showBoss (off by default; kept out of alerts)
-local function buildCues(reminders, boss)
+-- previewAll: the Timeline "Test" is a preview of the whole plan, so it must NOT
+-- filter to the logged-in character's name or hide categories — otherwise testing
+-- on a different char (or with log/team names that don't match) shows nothing.
+local function buildCues(reminders, boss, previewAll)
   local o = ns.DB.Options()
   local cues = {}
   for _, r in ipairs(reminders or {}) do
     local common = ALWAYS_SHOWN[r.category or ""]
-    local meOk = common or (not o.filterToMe) or nameMatchesMe(r.player)
-    if meOk and ns.DB.CategoryEnabled(r.category) then
+    local meOk = previewAll or common or (not o.filterToMe) or nameMatchesMe(r.player)
+    if meOk and (previewAll or ns.DB.CategoryEnabled(r.category)) then
       cues[#cues + 1] = {
         kind = "cd", timeMs = r.timeMs, spellId = r.spellId,
         player = r.player, category = r.category, spellName = r.spellName, alert = r.alert,
@@ -188,7 +191,7 @@ end
 -- the virtual clock. `onTick(elapsed, total)` drives the Timeline playhead.
 -- Honors the same filterToMe / category / showBoss options as a real pull.
 function Scheduler.StartPreview(reminders, boss, speed, onTick)
-  local cues = buildCues(reminders or {}, boss)
+  local cues = buildCues(reminders or {}, boss, true) -- preview the whole plan
   if #cues == 0 then return false end
   activeId = -2
   return run(cues, { preview = true, speed = speed or 1, onTick = onTick })
