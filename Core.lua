@@ -16,7 +16,7 @@ Core:RegisterEvent("ENCOUNTER_START")
 Core:RegisterEvent("ENCOUNTER_END")
 Core:RegisterEvent("PLAYER_REGEN_ENABLED")
 
-Core:SetScript("OnEvent", function(_, event, ...)
+Core:SetScript("OnEvent", ns.wrap(function(_, event, ...)
   if event == "ADDON_LOADED" then
     local name = ...
     if name == addonName then
@@ -36,12 +36,12 @@ Core:SetScript("OnEvent", function(_, event, ...)
     -- safety net: combat ended without an ENCOUNTER_END (wipe / left instance)
     if ns.Scheduler.IsActive() then ns.Scheduler.Stop() end
   end
-end)
+end))
 
 -- ── Slash commands ──────────────────────────────────────────────────────────
 SLASH_COOLPLAN1 = "/coolplan"
 SLASH_COOLPLAN2 = "/cp"
-SlashCmdList["COOLPLAN"] = function(msg)
+SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
   msg = (msg or ""):gsub("^%s+", ""):gsub("%s+$", "")
   local cmd, rest = msg:match("^(%S*)%s*(.*)$")
   cmd = (cmd or ""):lower()
@@ -73,6 +73,11 @@ SlashCmdList["COOLPLAN"] = function(msg)
   elseif cmd == "stop" then
     ns.Scheduler.Stop()
     out("stopped.")
+  elseif cmd == "errors" then
+    ns.PrintErrors()
+  elseif cmd == "debug" then
+    ns.debug = not ns.debug
+    out("debug mode " .. (ns.debug and "ON (errors will pop up)" or "OFF (errors suppressed)") .. ".")
   elseif cmd == "list" then
     local n = 0
     for id, e in pairs(ns.DB.Library()) do
@@ -85,6 +90,6 @@ SlashCmdList["COOLPLAN"] = function(msg)
     end
     if n == 0 then out("no plans imported yet. /coolplan edit to paste one.") end
   else
-    out("commands: options | edit | plans | list | test | demo | move | lock | testenc <id> | stop")
+    out("commands: options | edit | plans | list | test | demo | move | lock | testenc <id> | stop | errors | debug")
   end
-end
+end)

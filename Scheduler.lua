@@ -18,6 +18,7 @@ local function nameMatchesMe(player)
 end
 
 local function tick()
+  if not pullTime or not queue then return end
   local o = ns.DB.Options()
   local elapsed = GetTime() - pullTime
   local lead = o.leadSeconds or 4
@@ -85,7 +86,7 @@ local function run(cues)
   table.sort(queue, function(a, b) return a.castAt < b.castAt end)
 
   pullTime = GetTime()
-  ticker = C_Timer.NewTicker(0.1, tick)
+  ticker = C_Timer.NewTicker(0.1, ns.wrap(tick))
   return true
 end
 

@@ -49,6 +49,16 @@ AddOns list), or tick **Load out of date AddOns**.
 | `/coolplan lock` | Lock frames and save positions |
 | `/coolplan testenc <encounterID>` | Dry-run a stored plan's schedule now |
 | `/coolplan stop` | Stop the active schedule |
+| `/coolplan errors` | Show errors CoolPlan caught (for bug reports) |
+| `/coolplan debug` | Toggle: let errors pop up again (developer mode) |
+
+### Errors
+
+CoolPlan wraps its own callbacks (events, the combat ticker, slash, UI), so a bug
+here is **caught and suppressed** instead of spamming WoW's Lua error popup during
+a pull. You get one throttled chat notice; view the details with `/coolplan
+errors`. This does not touch other addons' error reporting. If you're debugging,
+`/coolplan debug` re-enables popups.
 
 ### Alerts
 
@@ -147,6 +157,7 @@ mirror (verified against the same fixtures).
 | `DB.lua` | SavedVariables (`CoolPlanDB`): plans + options |
 | `Scheduler.lua` | `ENCOUNTER_START` → sorted reminder queue via `C_Timer` ticker |
 | `Reminders.lua` | HUD frame + sound + TTS |
+| `Util.lua` | Error containment (safecall/wrap) + captured-error log |
 | `Editor.lua` | Import / Export window |
 | `Manager.lua` | Saved Plans manager (library list: use/rename/delete/export) |
 | `Options.lua` | Options window |

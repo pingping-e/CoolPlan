@@ -78,10 +78,12 @@ local function buildHud()
   f.icon:SetPoint("LEFT", f, "LEFT", 6, 0)
   f.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
 
-  f.count = f:CreateFontString(nil, "OVERLAY")
+  -- start from a real font object so SetText never hits a font-less string;
+  -- ApplyOptions resizes via SetFont afterwards.
+  f.count = f:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
   f.count:SetPoint("CENTER", f.icon, "CENTER", 0, 0)
 
-  f.name = f:CreateFontString(nil, "OVERLAY")
+  f.name = f:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
   f.name:SetPoint("LEFT", f.icon, "RIGHT", 12, 6)
 
   f.bar = CreateFrame("StatusBar", nil, f)
@@ -133,6 +135,12 @@ local function ensureFrames()
   if hud then return end
   hud = buildHud()
   queue = buildQueue()
+  -- wire dragging (respects the per-frame `locked` flag)
+  local o = ns.DB and ns.DB.Options and ns.DB.Options()
+  if o then
+    makeMovable(hud, o.hud)
+    makeMovable(queue, o.queueAnchor)
+  end
 end
 
 function Reminders.Init()
@@ -149,9 +157,11 @@ function Reminders.ApplyOptions()
   local c = o.textColor or { r = 1, g = 0.95, b = 0.4 }
 
   hud:SetScale(o.scale or 1)
-  hud.name:SetFont(fontPath, size, "OUTLINE")
+  if fontPath then
+    hud.name:SetFont(fontPath, size, "OUTLINE")
+    hud.count:SetFont(fontPath, size + 10, "OUTLINE")
+  end
   hud.name:SetTextColor(c.r, c.g, c.b)
-  hud.count:SetFont(fontPath, size + 10, "OUTLINE")
   hud.count:SetTextColor(1, 1, 1)
   hud.bar:SetStatusBarColor(c.r, c.g, c.b)
   restorePosition(hud, o.hud)

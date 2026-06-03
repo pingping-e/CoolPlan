@@ -6,6 +6,7 @@
 ## SavedVariables: CoolPlanDB
 ## X-Website: https://coolplan.team
 
+Util.lua
 EncounterNames.lua
 Format.lua
 DB.lua

@@ -52,10 +52,10 @@ local function checkbox(parent, label, x, y, getter, setter)
   local fs = cb:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   fs:SetPoint("LEFT", cb, "RIGHT", 2, 0)
   fs:SetText(label)
-  cb:SetScript("OnClick", function(self)
+  cb:SetScript("OnClick", ns.wrap(function(self)
     setter(self:GetChecked() and true or false)
     refresh()
-  end)
+  end))
   return cb
 end
 
@@ -69,17 +69,18 @@ local function slider(parent, label, x, y, minV, maxV, step, getter, setter)
   s:SetValueStep(step)
   s:SetObeyStepOnDrag(true)
   s:SetValue(getter())
-  _G[s:GetName() .. "Low"]:SetText(tostring(minV))
-  _G[s:GetName() .. "High"]:SetText(tostring(maxV))
-  _G[s:GetName() .. "Text"]:SetText("")
+  -- OptionsSliderTemplate's named regions can vary by client; guard them.
+  local low = _G[s:GetName() .. "Low"]; if low then low:SetText(tostring(minV)) end
+  local high = _G[s:GetName() .. "High"]; if high then high:SetText(tostring(maxV)) end
+  local txt = _G[s:GetName() .. "Text"]; if txt then txt:SetText("") end
   local function setLabel(v) lbl:SetText(label .. ": " .. v) end
   setLabel(getter())
-  s:SetScript("OnValueChanged", function(_, v)
+  s:SetScript("OnValueChanged", ns.wrap(function(_, v)
     v = math.floor(v / step + 0.5) * step
     setter(v)
     setLabel(v)
     refresh()
-  end)
+  end))
   return s
 end
 
@@ -88,7 +89,7 @@ local function button(parent, text, w, x, y, onClick)
   b:SetSize(w, 22)
   b:SetText(text)
   b:SetPoint("TOPLEFT", x, y)
-  b:SetScript("OnClick", onClick)
+  b:SetScript("OnClick", ns.wrap(onClick))
   return b
 end
 
@@ -151,11 +152,11 @@ local function build()
   cs:SetPoint("TOPLEFT", LX + 4, -304)
   cs:SetAutoFocus(false)
   cs:SetText(o.customSound or "")
-  cs:SetScript("OnEnterPressed", function(self)
+  cs:SetScript("OnEnterPressed", ns.wrap(function(self)
     o.customSound = self:GetText()
     self:ClearFocus()
     if o.customSound ~= "" then PlaySoundFile(o.customSound, "Master") end
-  end)
+  end))
 
   local voiceLabel = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   voiceLabel:SetPoint("TOPLEFT", LX, -332)
@@ -166,10 +167,10 @@ local function build()
   voice:SetAutoFocus(false)
   voice:SetNumeric(true)
   voice:SetText(tostring(o.ttsVoice or 0))
-  voice:SetScript("OnEnterPressed", function(self)
+  voice:SetScript("OnEnterPressed", ns.wrap(function(self)
     o.ttsVoice = tonumber(self:GetText()) or 0
     self:ClearFocus()
-  end)
+  end))
 
   -- ── right column: HUD + queue ──
   local RX = 300
@@ -190,10 +191,10 @@ local function build()
     local tex = sw:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints()
     tex:SetColorTexture(col[1], col[2], col[3])
-    sw:SetScript("OnClick", function()
+    sw:SetScript("OnClick", ns.wrap(function()
       o.textColor = { r = col[1], g = col[2], b = col[3] }
       refresh()
-    end)
+    end))
     cx = cx + 26
   end
 
