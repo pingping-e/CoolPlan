@@ -17,13 +17,22 @@ local ICON = 20
 
 local page, catDD, grpDD, bossDD, noteDD, testBtn, status
 local scroll, canvas, playhead, hbar
+local zoomBtns = {}
 local markerPool = {}          -- reusable icon markers
 local rowPool = {}             -- reusable per-track background rows
 local labelPool = {}
-local linePool = {}            -- vertical gridlines (30s ticks + boss abilities)
-local axisPool = {}            -- time-axis labels (every 30s)
+local linePool = {}            -- vertical gridlines (time ticks + boss abilities)
+local axisPool = {}            -- time-axis labels
 
 local AXIS_H = 16              -- top strip for the time axis
+local secondsPerView = 60     -- zoom: how many seconds fill the visible width (1x)
+
+-- px-per-second derived from the current view width so "Ns/view" fills the view.
+local function pxPerSec()
+  local w = (scroll and scroll:GetWidth()) or 0
+  if w < 50 then w = 500 end
+  return math.max(2, (w - LABEL_W - 8) / secondsPerView)
+end
 
 local selCat = "mythicplus"
 local selGrp = 1               -- index into the category's groups
@@ -138,7 +147,9 @@ local function renderCanvas()
   for _, r in ipairs(reminders) do if r.timeMs > maxMs then maxMs = r.timeMs end end
   for _, b in ipairs(boss) do if b.timeMs > maxMs then maxMs = b.timeMs end end
   local totalSec = maxMs / 1000 + 2
-  local width = LABEL_W + totalSec * PX_PER_SEC + 20
+  local pps = pxPerSec()
+  canvas._pxPerSec = pps
+  local width = LABEL_W + totalSec * pps + 20
   canvas:SetWidth(math.max(width, scroll:GetWidth() or 600))
 
   -- group cooldowns by player (preserve first-seen order)
@@ -158,7 +169,7 @@ local function renderCanvas()
     markerIndex = markerIndex + 1
     local m = getMarker(markerIndex)
     m:ClearAllPoints()
-    local x = LABEL_W + (timeMs / 1000) * PX_PER_SEC
+    local x = LABEL_W + (timeMs / 1000) * pps
     m:SetPoint("TOPLEFT", canvas, "TOPLEFT", x - ICON / 2, rowTop)
     local icon = spellIcon(spellId)
     if icon then
@@ -233,11 +244,16 @@ local function renderCanvas()
     lineIndex = lineIndex + 1
     local t = getLine(lineIndex)
     t:ClearAllPoints()
-    local x = LABEL_W + (timeMs / 1000) * PX_PER_SEC
+    local x = LABEL_W + (timeMs / 1000) * pps
     t:SetPoint("TOPLEFT", canvas, "TOPLEFT", x, gridTop)
     t:SetPoint("BOTTOMLEFT", canvas, "TOPLEFT", x, gridBottom)
     if isBoss then t:SetColorTexture(1, 0.3, 0.25, 0.5) else t:SetColorTexture(1, 1, 1, 0.10) end
     t:Show()
+  end
+  -- adaptive tick interval: smallest "nice" step that keeps labels ~64px apart
+  local tickSec = 60
+  for _, cand in ipairs({ 5, 10, 15, 30, 60, 120 }) do
+    if cand * pps >= 64 then tickSec = cand; break end
   end
   local sec = 0
   while sec <= totalSec do
@@ -245,10 +261,10 @@ local function renderCanvas()
     axisIndex = axisIndex + 1
     local a = getAxis(axisIndex)
     a:ClearAllPoints()
-    a:SetPoint("TOP", canvas, "TOPLEFT", LABEL_W + sec * PX_PER_SEC, -2)
+    a:SetPoint("TOP", canvas, "TOPLEFT", LABEL_W + sec * pps, -2)
     a:SetText((ns.Format.FormatTime(sec * 1000):gsub("%.%d$", "")))
     a:Show()
-    sec = sec + 30
+    sec = sec + tickSec
   end
   for _, b in ipairs(boss) do vline(b.timeMs, true) end
 
@@ -281,7 +297,7 @@ local function renderCanvas()
 end
 
 local function setPlayhead(elapsed)
-  local x = LABEL_W + (elapsed or 0) * PX_PER_SEC
+  local x = LABEL_W + (elapsed or 0) * (canvas._pxPerSec or 8)
   playhead:ClearAllPoints()
   playhead:SetPoint("TOPLEFT", canvas, "TOPLEFT", x, canvas._gridTop or -AXIS_H)
   playhead:SetHeight(canvas._height or 60)
@@ -410,6 +426,12 @@ function Timeline.Refresh()
   renderCanvas()
 end
 
+local function updateZoomButtons()
+  for _, b in ipairs(zoomBtns) do
+    if b.spv == secondsPerView then b:LockHighlight() else b:UnlockHighlight() end
+  end
+end
+
 function Timeline.BuildPage(host)
   page = host
 
@@ -452,6 +474,32 @@ function Timeline.BuildPage(host)
       renderCanvas()
     end)
   grpDD:SetPoint("LEFT", catDD, "RIGHT", 2, 0)
+
+  -- zoom control (row 1, right): 2x=30s/view, 1x=60s/view, ½x=120s/view
+  local ZOOMS = { { label = "2x", spv = 30 }, { label = "1x", spv = 60 }, { label = "1/2x", spv = 120 } }
+  local prevZ
+  for _, z in ipairs(ZOOMS) do
+    local b = CreateFrame("Button", nil, host, "UIPanelButtonTemplate")
+    b:SetSize(36, 22)
+    b:SetText(z.label)
+    if prevZ then b:SetPoint("RIGHT", prevZ, "LEFT", 2, 0)
+    else b:SetPoint("TOPRIGHT", -8, -24) end
+    b.spv = z.spv
+    b:SetScript("OnClick", ns.wrap(function()
+      secondsPerView = z.spv
+      updateZoomButtons()
+      renderCanvas()
+    end))
+    b:SetScript("OnEnter", function(self)
+      GameTooltip:SetOwner(self, "ANCHOR_TOP")
+      GameTooltip:AddLine(z.spv .. "s per view")
+      GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    zoomBtns[#zoomBtns + 1] = b
+    prevZ = b
+  end
+  updateZoomButtons()
 
   -- row 2: boss + note + Test (kept off the first row so the dropdowns never
   -- overflow the page to the right)
