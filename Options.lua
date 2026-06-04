@@ -314,13 +314,13 @@ function Options.BuildPage(host)
     function() return o.showQueue end, function(v) o.showQueue = v end)
   slider(rcol, "Queue size", RX, -350, 1, 6, 1,
     function() return o.queueCount or 3 end, function(v) o.queueCount = v end)
-  checkbox(rcol, "Show boss mechanics", RX, -404,
-    function() return o.showBoss end, function(v) o.showBoss = v end)
 
   -- ── right column: position ──
-  header(rcol, "Position", RX, -438)
-  button(rcol, "Move frames", 120, RX, -460, function() ns.Reminders.ToggleMover() end)
-  button(rcol, "Lock", 70, RX + 128, -460, function() ns.Reminders.SetLocked(true) end)
+  -- (boss mechanics are intentionally NOT alerted here — BigWigs/DBM already
+  -- call those out; CoolPlan focuses on the team's cooldowns.)
+  header(rcol, "Position", RX, -404)
+  button(rcol, "Move frames", 120, RX, -426, function() ns.Reminders.ToggleMover() end)
+  button(rcol, "Lock", 70, RX + 128, -426, function() ns.Reminders.SetLocked(true) end)
 
   -- ── categories (full width, roomy 3-col grid) ──
   header(host, "Show categories", LX, -404)

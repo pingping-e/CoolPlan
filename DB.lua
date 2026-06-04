@@ -19,20 +19,20 @@ ns.DB = DB
 local defaults = {
   options = {
     filterToMe = true,
-    leadSeconds = 4,          -- on-screen anticipation lead (seconds before cast)
-    soundLeadSeconds = 0,     -- sound/TTS lead (seconds before cast) — independent
+    leadSeconds = 5,          -- on-screen anticipation lead (seconds before cast)
+    soundLeadSeconds = 3,     -- sound/TTS lead (seconds before cast) — independent
     textEnabled = true,
     alertSound = "sound",     -- single alert mode: "none" | "sound" | "tts"
     ttsVoice = 0,
     soundKit = "RAID_WARNING",
-    showBoss = false, -- boss mechanics kept OUT of on-screen alerts by default
+    showBoss = false, -- boss mechanics kept OUT of alerts (BigWigs/DBM owns those); no UI toggle
     scale = 1.0,
     fontSize = 28,
     hudStyle = "iconName",    -- "icon" | "iconName" | "bar"
     timePos = "icon",         -- "icon" (inside icon/bar) | "right" (separate, on the right)
-    textColor = { r = 1, g = 0.95, b = 0.4 },
-    showQueue = false,
-    queueCount = 3,
+    textColor = { r = 1, g = 1, b = 1 },
+    showQueue = true,
+    queueCount = 2,
     categoryEnabled = {},
     hud = { point = "CENTER", relPoint = "CENTER", x = 0, y = 200, locked = true },
     queueAnchor = { point = "CENTER", relPoint = "CENTER", x = 0, y = 60, locked = true },
@@ -104,30 +104,29 @@ function DB.Init()
   end
 
   deepFill(CoolPlanDB, defaults)
-  -- One-time: boss mechanics are now OFF by default in on-screen alerts. Flip an
-  -- existing saved 'true' once (users can re-enable via Options afterwards).
-  if not CoolPlanDB._migrShowBossOff then
-    CoolPlanDB.options.showBoss = false
-    CoolPlanDB._migrShowBossOff = true
-  end
-  -- One-time: the upcoming queue is now OFF by default. Flip an existing saved
-  -- 'true' once (users can re-enable via Options afterwards).
-  if not CoolPlanDB._migrShowQueueOff then
-    CoolPlanDB.options.showQueue = false
-    CoolPlanDB._migrShowQueueOff = true
-  end
-  -- One-time: the Show-categories toggle had a Lua bug (`v and nil or false`
-  -- always wrote false), so the saved map is corrupt — every touched category
-  -- got stuck disabled. Clear it once so the fixed toggle starts all-enabled.
-  if not CoolPlanDB._migrCategoryReset then
-    CoolPlanDB.options.categoryEnabled = {}
-    CoolPlanDB._migrCategoryReset = true
-  end
-  -- One-time: force the upcoming queue off once more (it should be off by
-  -- default; this clears it for anyone it stayed on for).
-  if not CoolPlanDB._migrShowQueueOff2 then
-    CoolPlanDB.options.showQueue = false
-    CoolPlanDB._migrShowQueueOff2 = true
+  -- One-time: apply the v0.2 recommended default profile to existing installs so
+  -- everyone converges on the tuned out-of-box settings once. Frame positions,
+  -- minimap and window size are intentionally left untouched. New installs get
+  -- these straight from `defaults` above. (Supersedes the earlier per-key
+  -- showBoss-off / showQueue-off / category-reset migrations.)
+  if not CoolPlanDB._migrDefaultsV2 then
+    local opt = CoolPlanDB.options
+    opt.textEnabled = true
+    opt.filterToMe = true
+    opt.alertSound = "sound"
+    opt.soundKit = "RAID_WARNING"
+    opt.leadSeconds = 5
+    opt.soundLeadSeconds = 3
+    opt.categoryEnabled = {}
+    opt.scale = 1.0
+    opt.fontSize = 28
+    opt.hudStyle = "iconName"
+    opt.timePos = "icon"
+    opt.textColor = { r = 1, g = 1, b = 1 }
+    opt.showQueue = true
+    opt.queueCount = 2
+    opt.showBoss = false
+    CoolPlanDB._migrDefaultsV2 = true
   end
   -- One-time: boss timelines were once SHARED at the encounter level. They are
   -- now bound to each plan (one body). Copy any encounter-level boss onto every
