@@ -22,7 +22,6 @@ local defaults = {
     alertSound = "sound",     -- single alert mode: "none" | "sound" | "tts"
     ttsVoice = 0,
     soundKit = "RAID_WARNING",
-    showBoss = false, -- boss mechanics kept OUT of on-screen alerts by default
     scale = 1.0,
     fontSize = 28,
     hudStyle = "iconName",    -- "icon" | "iconName" | "bar"
@@ -101,12 +100,9 @@ function DB.Init()
   end
 
   deepFill(CoolPlanDB, defaults)
-  -- One-time: boss mechanics are now OFF by default in on-screen alerts. Flip an
-  -- existing saved 'true' once (users can re-enable via Options afterwards).
-  if not CoolPlanDB._migrShowBossOff then
-    CoolPlanDB.options.showBoss = false
-    CoolPlanDB._migrShowBossOff = true
-  end
+  -- Boss mechanics no longer fire as on-screen alerts (boss timelines are
+  -- display-only in the Timeline view now), so drop any stale saved option.
+  CoolPlanDB.options.showBoss = nil
   -- One-time: the upcoming queue is now OFF by default. Flip an existing saved
   -- 'true' once (users can re-enable via Options afterwards).
   if not CoolPlanDB._migrShowQueueOff then
