@@ -499,7 +499,7 @@ function Timeline.BuildPage(host)
     if cat then selCat = cat.key; catDD:SetValue(cat.key, cat.label) end
   end
 
-  grpDD = ns.Window.MakeDropdown(host, "CoolPlanTLGrpDD", 180, grpItems,
+  grpDD = ns.Window.MakeDropdown(host, "CoolPlanTLGrpDD", 210, grpItems,
     function(idx)
       selGrp = idx
       selBoss = 1
@@ -508,7 +508,7 @@ function Timeline.BuildPage(host)
       refreshNoteDD()
       renderCanvas()
     end)
-  grpDD:SetPoint("LEFT", catDD, "RIGHT", 2, 0)
+  grpDD:SetPoint("LEFT", catDD, "RIGHT", 8, 0)
 
   -- zoom control (row 1, right): 2x=30s/view, 1x=60s/view, ½x=120s/view
   local ZOOMS = { { label = "2x", spv = 30 }, { label = "1x", spv = 60 }, { label = "1/2x", spv = 120 } }
@@ -538,7 +538,7 @@ function Timeline.BuildPage(host)
 
   -- row 2: boss + note + Test (kept off the first row so the dropdowns never
   -- overflow the page to the right)
-  bossDD = ns.Window.MakeDropdown(host, "CoolPlanTLBossDD", 160, bossItems,
+  bossDD = ns.Window.MakeDropdown(host, "CoolPlanTLBossDD", 200, bossItems,
     function(idx)
       selBoss = idx
       selNote = nil
@@ -554,12 +554,12 @@ function Timeline.BuildPage(host)
       refreshPreviewDD()
       renderCanvas()
     end)
-  noteDD:SetPoint("LEFT", bossDD, "RIGHT", 2, 0)
+  noteDD:SetPoint("LEFT", bossDD, "RIGHT", 8, 0)
 
   -- "Preview as" — which player's reminders the Test plays (Everyone / a player).
   previewDD = ns.Window.MakeDropdown(host, "CoolPlanTLPreviewDD", 130, previewItems,
     function(v) selPreviewAs = v end)
-  previewDD:SetPoint("LEFT", noteDD, "RIGHT", 2, 0)
+  previewDD:SetPoint("LEFT", noteDD, "RIGHT", 8, 0)
 
   -- Test / Stop button — pin to the host's right edge (row 2) so it follows the
   -- window width and never gets clipped when the shell is narrowed. It sits to

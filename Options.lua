@@ -27,21 +27,11 @@ local COLORS = {
   { 0.4, 0.8, 1 },   -- cyan
 }
 
--- Wow built-in SOUNDKIT names (verified to exist). value = SOUNDKIT key.
-local SOUNDS = {
-  { "Raid Warning",   "RAID_WARNING" },
-  { "Ready Check",    "READY_CHECK" },
-  { "Alarm",          "ALARM_CLOCK_WARNING_3" },
-  { "Boss Whisper",   "UI_RAID_BOSS_WHISPER_WARNING" },
-  { "Boss Emote",     "UI_RAID_BOSS_EMOTE_WARNING" },
-  { "PvP Update",     "IGPVPUPDATE" },
-  { "Map Ping",       "MAP_PING" },
-  { "Auction Open",   "AUCTION_WINDOW_OPEN" },
-}
-
-local function soundLabel(kit)
-  for _, s in ipairs(SOUNDS) do if s[2] == kit then return s[1] end end
-  return kit or "Raid Warning"
+-- Display name for a saved sound value (SOUNDKIT name or LSM sound name).
+-- "Raid Warning" is the pinned SOUNDKIT default; LSM names show as-is.
+local function soundName(v)
+  if not v or v == "RAID_WARNING" then return "Raid Warning" end
+  return v
 end
 
 local function refresh()
@@ -133,7 +123,7 @@ function Options.BuildPage(host)
   local RX = 8
 
   -- forward refs so the alert-mode dropdown can enable/disable the dependent rows
-  local sndDD, voiceDD
+  local sndBtn, voiceDD
   local styleDD, timePosDD
 
   local function hudStyleLabel(v)
@@ -147,12 +137,8 @@ function Options.BuildPage(host)
 
   local function syncAlertRows()
     local mode = o.alertSound or "sound"
-    if sndDD then
-      if mode == "sound" then UIDropDownMenu_EnableDropDown(sndDD) else UIDropDownMenu_DisableDropDown(sndDD) end
-    end
-    if voiceDD then
-      if mode == "tts" then UIDropDownMenu_EnableDropDown(voiceDD) else UIDropDownMenu_DisableDropDown(voiceDD) end
-    end
+    if sndBtn then sndBtn:SetEnabled(mode == "sound") end
+    if voiceDD then voiceDD:SetEnabled(mode == "tts") end
   end
 
   -- ── left column: alerts ──
@@ -179,8 +165,7 @@ function Options.BuildPage(host)
       syncAlertRows()
       -- audible preview of the chosen channel
       if mode == "sound" then
-        local k = SOUNDKIT and SOUNDKIT[o.soundKit or "RAID_WARNING"]
-        if k then PlaySound(k, "Master") end
+        if ns.Reminders then ns.Reminders.PlaySound(o.soundKit) end
       elseif mode == "tts" and ns.Reminders and ns.Reminders._speak then
         ns.Reminders._speak("CoolPlan", o)
       end
@@ -188,23 +173,37 @@ function Options.BuildPage(host)
   modeDD:SetPoint("TOPLEFT", LX - 8, -110)
   modeDD:SetValue(o.alertSound or "sound", alertModeLabel(o.alertSound))
 
-  -- sound kit (only meaningful in "sound" mode)
+  -- sound cue (only meaningful in "sound" mode). Opens a scrollable, searchable
+  -- picker backed by LibSharedMedia — the same shared sound list MRT/BigWigs/
+  -- WeakAuras/SharedMedia all contribute to. Raid Warning is pinned default.
   local sndLabel = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   sndLabel:SetPoint("TOPLEFT", LX, -148)
   sndLabel:SetText("Sound cue:")
-  sndDD = ns.Window.MakeDropdown(host, "CoolPlanOptSoundDD", 200,
-    function()
-      local items = {}
-      for _, s in ipairs(SOUNDS) do items[#items + 1] = { text = s[1], value = s[2] } end
-      return items
-    end,
-    function(kit)
-      o.soundKit = kit
-      local k = SOUNDKIT and SOUNDKIT[kit]
-      if k then PlaySound(k, "Master") end
+  sndBtn = CreateFrame("Button", "CoolPlanOptSoundBtn", host, "UIPanelButtonTemplate")
+  sndBtn:SetSize(200, 22)
+  sndBtn:SetPoint("TOPLEFT", LX - 8, -168)
+  sndBtn:SetText(soundName(o.soundKit))
+  do
+    -- match the MakeDropdown picker buttons: left-justified label, clipped (not
+    -- wrapped) so long sound names don't overflow
+    local f = sndBtn:GetFontString()
+    if f then
+      f:ClearAllPoints()
+      f:SetPoint("LEFT", 8, 0)
+      f:SetPoint("RIGHT", -8, 0)
+      f:SetJustifyH("LEFT")
+      if f.SetWordWrap then f:SetWordWrap(false) end
+    end
+  end
+  sndBtn:SetScript("OnClick", ns.wrap(function()
+    if ns.SoundPicker.IsShown() then ns.SoundPicker.Hide(); return end
+    ns.SoundPicker.Show(sndBtn, o.soundKit, function(value)
+      o.soundKit = value
+      sndBtn:SetText(soundName(value))
+      if ns.Reminders then ns.Reminders.PlaySound(value) end -- live preview
     end)
-  sndDD:SetPoint("TOPLEFT", LX - 8, -166)
-  sndDD:SetValue(o.soundKit or "RAID_WARNING", soundLabel(o.soundKit))
+  end))
+  if ns.Style then ns.Style.Button(sndBtn) end
 
   -- TTS voice select (only meaningful in "tts" mode). Lists installed voices by
   -- NAME; picking one saves its voiceID and speaks a preview.
@@ -237,12 +236,21 @@ function Options.BuildPage(host)
   voiceDD:SetPoint("TOPLEFT", LX - 8, -222)
   voiceDD:SetValue(o.ttsVoice or 0, voiceName(o.ttsVoice))
 
-  -- ── left column: timing ──
-  header(host, "Timing", LX, -262)
-  slider(host, "On-screen lead (s)", LX, -286, 0, 10, 1,
+  -- ── timing (a middle column that FLOATS between Alerts and the HUD column;
+  -- anchoring its container to host TOP keeps it band-centered as the window
+  -- resizes, instead of staying glued to the left next to Alerts) ──
+  local timingCol = CreateFrame("Frame", nil, host)
+  timingCol:SetSize(200, 150)
+  timingCol:SetPoint("TOP", host, "TOP", -16, -8)
+  header(timingCol, "Timing", 4, 0)
+  slider(timingCol, "On-screen lead (s)", 4, -24, 0, 10, 1,
     function() return o.leadSeconds or 4 end, function(v) o.leadSeconds = v end)
-  slider(host, "Sound/TTS lead (s)", LX, -340, 0, 10, 1,
+  slider(timingCol, "Sound/TTS lead (s)", 4, -78, 0, 10, 1,
     function() return o.soundLeadSeconds or 0 end, function(v) o.soundLeadSeconds = v end)
+  -- Spoken 3-2-1 countdown (TTS). Independent of the alert sound mode — works
+  -- even on Sound/None, and is separate from the spell-name TTS.
+  checkbox(timingCol, "Speak 3-2-1 countdown (TTS)", 4, -126,
+    function() return o.countdownVoice end, function(v) o.countdownVoice = v end)
 
   -- ── right column: HUD ── (parented to rcol → tracks the window's right edge)
   header(rcol, "HUD", RX, -8)
@@ -322,21 +330,35 @@ function Options.BuildPage(host)
   button(rcol, "Move frames", 120, RX, -426, function() ns.Reminders.ToggleMover() end)
   button(rcol, "Lock", 70, RX + 128, -426, function() ns.Reminders.SetLocked(true) end)
 
-  -- ── categories (full width, roomy 3-col grid) ──
-  header(host, "Show categories", LX, -404)
-  local gx, gy, col = LX, -428, 0
+  -- ── categories (moved up into the freed left/middle space; responsive grid
+  -- that reflows its column count with the window width) ──
+  header(host, "Show categories", LX, -262)
+  local catBoxes = {}
   for _, c in ipairs(CATEGORIES) do
     local key = c[1]
-    checkbox(host, c[2], gx, gy,
+    local cb = checkbox(host, c[2], LX, -288,
       function() return ns.DB.CategoryEnabled(key) end,
       function(v)
         -- enabled = nil (default-on), disabled = false. NOTE: `v and nil or false`
         -- is a Lua trap that always yields false — must branch explicitly.
         if v then o.categoryEnabled[key] = nil else o.categoryEnabled[key] = false end
       end)
-    col = col + 1
-    if col % 3 == 0 then gx = LX; gy = gy - 28 else gx = gx + 200 end
+    catBoxes[#catBoxes + 1] = cb
   end
+  local CAT_COL_W, CAT_ROW_H, CAT_Y0 = 185, 28, -288
+  local function layoutCategories()
+    -- keep the grid clear of the right-hand HUD column (~250px)
+    local avail = (host:GetWidth() or 720) - LX - 250
+    local cols = math.max(1, math.floor(avail / CAT_COL_W))
+    for i, cb in ipairs(catBoxes) do
+      local c0 = (i - 1) % cols
+      local r0 = math.floor((i - 1) / cols)
+      cb:ClearAllPoints()
+      cb:SetPoint("TOPLEFT", LX + c0 * CAT_COL_W, CAT_Y0 - r0 * CAT_ROW_H)
+    end
+  end
+  layoutCategories()
+  if host.HookScript then host:HookScript("OnSizeChanged", ns.wrap(layoutCategories)) end
 
   -- ── bottom buttons — pinned to the host's BOTTOM so they're always visible
   -- (responsive to window height) and never clip below the category grid.
@@ -352,7 +374,6 @@ function Options.BuildPage(host)
   if ns.Style then
     ns.Style.Apply(host)
     ns.Style.Dropdown(modeDD)
-    ns.Style.Dropdown(sndDD)
     ns.Style.Dropdown(voiceDD)
     ns.Style.Dropdown(styleDD)
     ns.Style.Dropdown(timePosDD)

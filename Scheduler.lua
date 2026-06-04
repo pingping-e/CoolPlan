@@ -54,6 +54,16 @@ local function tick(dt)
       ns.Reminders.Cue(item.cue, o)
     end
 
+    -- spoken 3-2-1 countdown (TTS) over the final 3s before the cast — once per
+    -- whole second, independent of the alert mode and the spell-name TTS.
+    if o.countdownVoice and remaining > 0 then
+      local sec = math.ceil(remaining)
+      if sec <= 3 and sec ~= item.cdLast then
+        item.cdLast = sec
+        ns.Reminders.SpeakCountdown(sec, o)
+      end
+    end
+
     if elapsed >= item.showAt and elapsed <= item.castAt + LINGER then
       -- in the anticipation window: nearest cast becomes the big alert,
       -- any others fall into the queue

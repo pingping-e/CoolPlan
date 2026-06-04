@@ -607,14 +607,35 @@ ns.Reminders._speak = speak
 -- ── discrete cues (fired once when a reminder's sound/TTS lead window opens) ────
 -- A single alert mode picks the audible channel: "sound" plays a sound kit,
 -- "tts" speaks the cooldown name, "none" stays silent (on-screen text only).
+-- Hybrid sound playback: a saved value can be EITHER a SOUNDKIT constant name
+-- (legacy / our pinned "Raid Warning" default) OR a LibSharedMedia sound name
+-- (the big shared list, file-path based). Try SOUNDKIT first (back-compat, no
+-- migration needed), then LSM via PlaySoundFile, else fall back to Raid Warning.
+function Reminders.PlaySound(key)
+  key = key or "RAID_WARNING"
+  local kit = SOUNDKIT and SOUNDKIT[key]
+  if kit then PlaySound(kit, "Master"); return end
+  local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
+  if LSM then
+    local path = LSM:Fetch("sound", key, true) -- silent=true → nil if missing
+    if path then PlaySoundFile(path, "Master"); return end
+  end
+  if SOUNDKIT and SOUNDKIT.RAID_WARNING then PlaySound(SOUNDKIT.RAID_WARNING, "Master") end
+end
+
 function Reminders.Cue(reminder, o)
   local mode = o.alertSound or "sound"
   if mode == "sound" then
-    local kit = SOUNDKIT and SOUNDKIT[o.soundKit or "RAID_WARNING"]
-    if kit then PlaySound(kit, "Master") end
+    Reminders.PlaySound(o.soundKit)
   elseif mode == "tts" then
     speak(labelFor(reminder), o)
   end
+end
+
+-- Spoken "3..2..1" countdown before a cue — ALWAYS uses TTS and is independent
+-- of the alert sound mode (works on Sound/None too) and of the spell-name TTS.
+function Reminders.SpeakCountdown(n, o)
+  speak(tostring(n), o)
 end
 
 function Reminders.Clear()

@@ -279,7 +279,13 @@ end
 function Style.Dropdown(dd)
   if not dd or dd._cpSkinned then return end
   local name = has(dd, "GetName") and dd:GetName()
-  if not name then return end
+  -- Selects are now flat buttons backed by ns.Picker (not UIDropDownMenus), so
+  -- callers passing those here just want them styled as buttons. Detect a real
+  -- UIDropDownMenu by its template-created `<name>Middle` region; otherwise skin
+  -- as a button.
+  if not (name and _G[name .. "Middle"]) then
+    return Style.Button(dd)
+  end
 
   for _, suffix in ipairs({ "Left", "Middle", "Right" }) do
     local r = _G[name .. suffix]

@@ -113,7 +113,7 @@ local function build()
   local maxW = math.min(1600, math.max(900, (UIParent:GetWidth() or 1280) - 40))
   local maxH = math.min(1000, math.max(640, (UIParent:GetHeight() or 800) - 40))
   local function clampSize(v, lo, hi) return math.min(math.max(v or lo, lo), hi) end
-  f:SetSize(clampSize((o and o.windowW) or 860, 760, maxW), clampSize((o and o.windowH) or 640, 620, maxH))
+  f:SetSize(clampSize((o and o.windowW) or 900, 900, maxW), clampSize((o and o.windowH) or 640, 620, maxH))
   f:SetPoint("CENTER")
   f:SetFrameStrata("DIALOG")
   f:SetMovable(true)
@@ -127,9 +127,9 @@ local function build()
   -- so they reflow automatically. Size is saved across sessions.
   f:SetResizable(true)
   if f.SetResizeBounds then
-    f:SetResizeBounds(760, 620, maxW, maxH)
+    f:SetResizeBounds(900, 620, maxW, maxH)
   elseif f.SetMinResize then
-    f:SetMinResize(760, 620)
+    f:SetMinResize(900, 620)
     if f.SetMaxResize then f:SetMaxResize(maxW, maxH) end
   end
   local grip = CreateFrame("Button", nil, f)
@@ -321,72 +321,48 @@ function Window.EncounterName(id)
   return "Encounter " .. tostring(id)
 end
 
--- ── reusable UIDropDownMenu wrapper ──────────────────────────────────────────
--- Creates a dropdown. `getItems()` must return a list of { text=, value=,
--- (optional) onClick= }. `onSelect(value, text)` fires after a pick. The
--- caller drives the displayed text via dd:Refresh(value, text).
+-- ── reusable select control (backed by ns.Picker) ────────────────────────────
+-- Returns a flat button that opens the shared scrollable/searchable popup picker
+-- (same look as the sound picker). `getItems()` returns { {text=, value=}, ... };
+-- `onSelect(value, text)` fires after a pick. Keeps the old API: dd:SetValue,
+-- dd:SetPoint, dd:SetEnabled.
 function Window.MakeDropdown(parent, name, width, getItems, onSelect)
-  local dd = CreateFrame("Frame", name, parent, "UIDropDownMenuTemplate")
+  width = width or 160
+  local dd = CreateFrame("Button", name, parent, "UIPanelButtonTemplate")
+  dd:SetSize(width, 22)
   dd._value = nil
 
-  local function init(self, level)
-    local items = getItems() or {}
-    for _, it in ipairs(items) do
-      local info = UIDropDownMenu_CreateInfo()
-      info.text = it.text
-      info.value = it.value
-      info.checked = (dd._value == it.value)
-      info.func = ns.wrap(function()
-        dd._value = it.value
-        UIDropDownMenu_SetText(dd, it.text)
-        CloseDropDownMenus()
-        if onSelect then onSelect(it.value, it.text) end
-      end)
-      UIDropDownMenu_AddButton(info, level)
-    end
-  end
-
-  UIDropDownMenu_Initialize(dd, ns.wrap(init))
-  UIDropDownMenu_SetWidth(dd, width or 160)
-  UIDropDownMenu_JustifyText(dd, "LEFT")
-
-  -- Whole-box click: the stock template only opens when the small arrow button
-  -- is clicked. Lay a transparent button over the visible field area so a click
-  -- anywhere in the box toggles the menu. The arrow button keeps working too.
-  do
-    local ddName = dd.GetName and dd:GetName()
-    local arrow = ddName and _G[ddName .. "Button"]
-    local hit = CreateFrame("Button", nil, dd)
-    -- cover the visible field: the template pads ~16px left and the arrow sits
-    -- on the right, so span between them. Leave the arrow itself clickable.
-    hit:SetPoint("TOPLEFT", dd, "TOPLEFT", 16, -2)
-    hit:SetPoint("BOTTOMRIGHT", dd, "BOTTOMRIGHT", -16, 2)
-    hit:SetFrameLevel((dd:GetFrameLevel() or 1) + 1)
-    hit:RegisterForClicks("LeftButtonUp")
-    hit:SetScript("OnClick", ns.wrap(function()
-      if arrow and arrow.Click then
-        arrow:Click()        -- reuse the template's own toggle logic
-      else
-        ToggleDropDownMenu(1, nil, dd, dd, 0, 0)
-      end
-    end))
-    -- subtle hover tint across the whole box (matches Style accent)
-    local hl = hit:CreateTexture(nil, "HIGHLIGHT")
-    hl:SetAllPoints()
-    if ns.Style then
-      local a = ns.Style.colors.accent
-      hl:SetColorTexture(a[1], a[2], a[3], 0.12)
-    else
-      hl:SetColorTexture(1, 1, 1, 0.08)
-    end
-    dd._hit = hit
+  -- left-justified label; long values (e.g. TTS voice names) clip to the button
+  -- width instead of wrapping/overflowing (the full name shows inside the picker)
+  local fs = dd.GetFontString and dd:GetFontString()
+  if fs then
+    fs:ClearAllPoints()
+    fs:SetPoint("LEFT", 8, 0)
+    fs:SetPoint("RIGHT", -8, 0)
+    fs:SetJustifyH("LEFT")
+    if fs.SetWordWrap then fs:SetWordWrap(false) end
   end
 
   -- programmatically set value + display text without firing onSelect
   function dd:SetValue(value, text)
     self._value = value
-    UIDropDownMenu_SetText(self, text or "")
+    self:SetText(text or "")
   end
 
+  dd:SetScript("OnClick", ns.wrap(function(self)
+    if ns.Picker.IsShown() then ns.Picker.Hide(); return end
+    ns.Picker.Open(self, {
+      width = width,
+      current = self._value,
+      getItems = getItems,
+      search = "auto", -- show a search box only for long lists
+      onPick = function(value, text)
+        self:SetValue(value, text)
+        if onSelect then onSelect(value, text) end
+      end,
+    })
+  end))
+
+  if ns.Style and ns.Style.Button then ns.Style.Button(dd) end
   return dd
 end

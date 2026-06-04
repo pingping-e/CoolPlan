@@ -1,8 +1,8 @@
 -- Saved Plans page: a per-dungeon/boss browser of YOUR saved notes.
 -- Top: Category dropdown (Mythic+ / Raid) → Dungeon/Instance dropdown → Boss
 -- dropdown. Below: the selected boss's saved cooldown plans, each with Use /
--- Rename / Delete / Export / Share. A plan that carries a boss timeline shows a
--- "+boss" tag; the boss travels with the plan (deleting the plan removes it).
+-- Rename / Delete / Export / Share. A plan's boss timeline (if any) travels with
+-- it silently — display-only on the Timeline view, so it's not surfaced here.
 -- Embedded into the Window shell via Manager.BuildPage(host).
 
 local _, ns = ...
@@ -137,9 +137,8 @@ function Manager.Refresh()
     local e, id = it.e, it.id
 
     local active = (e.active == it.index)
-    local bossTag = (it.p.boss and #it.p.boss > 0) and " |cffff7777+boss|r" or ""
-    row.text:SetText(("%s|cff88ccff%s|r |cff888888(%d cd)|r%s"):format(
-      active and "|cff66ff66> |r" or "", it.p.label, #it.p.reminders, bossTag))
+    row.text:SetText(("%s|cff88ccff%s|r |cff888888(%d cd)|r"):format(
+      active and "|cff66ff66> |r" or "", it.p.label, #it.p.reminders))
     row.use:Show()
     row.use:SetText(active and "Active" or "Use")
     row.use:SetScript("OnClick", ns.wrap(function() ns.DB.SetActive(id, it.index); Manager.Refresh() end))
@@ -251,23 +250,23 @@ function Manager.BuildPage(host)
   end
 
   -- dungeon / instance dropdown
-  grpDD = ns.Window.MakeDropdown(host, "CoolPlanMgrGrpDD", 180, grpItems,
+  grpDD = ns.Window.MakeDropdown(host, "CoolPlanMgrGrpDD", 210, grpItems,
     function(idx)
       selGrp = idx
       selBoss = 1
       ensureBossSelection()
       Manager.Refresh()
     end)
-  grpDD:SetPoint("LEFT", catDD, "RIGHT", 4, 0)
+  grpDD:SetPoint("LEFT", catDD, "RIGHT", 8, 0)
 
   -- boss dropdown
-  bossDD = ns.Window.MakeDropdown(host, "CoolPlanMgrBossDD", 180, bossItems,
+  bossDD = ns.Window.MakeDropdown(host, "CoolPlanMgrBossDD", 210, bossItems,
     function(idx)
       selBoss = idx
       resolveSelEnc()
       Manager.Refresh()
     end)
-  bossDD:SetPoint("LEFT", grpDD, "RIGHT", 4, 0)
+  bossDD:SetPoint("LEFT", grpDD, "RIGHT", 8, 0)
 
   -- selected boss header
   header = host:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")

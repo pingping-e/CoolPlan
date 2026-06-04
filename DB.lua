@@ -25,6 +25,7 @@ local defaults = {
     alertSound = "sound",     -- single alert mode: "none" | "sound" | "tts"
     ttsVoice = 0,
     soundKit = "RAID_WARNING",
+    countdownVoice = false, -- speak a 3-2-1 TTS countdown before each cue (separate from spell-name TTS)
     scale = 1.0,
     fontSize = 28,
     hudStyle = "iconName",    -- "icon" | "iconName" | "bar"
