@@ -25,7 +25,6 @@ local defaults = {
     alertSound = "sound",     -- single alert mode: "none" | "sound" | "tts"
     ttsVoice = 0,
     soundKit = "RAID_WARNING",
-    showBoss = false, -- boss mechanics kept OUT of alerts (BigWigs/DBM owns those); no UI toggle
     scale = 1.0,
     fontSize = 28,
     hudStyle = "iconName",    -- "icon" | "iconName" | "bar"
@@ -104,7 +103,10 @@ function DB.Init()
   end
 
   deepFill(CoolPlanDB, defaults)
-  -- One-time: apply the v0.2 recommended default profile to existing installs so
+  -- Boss mechanics no longer fire as alerts (boss timelines are display-only in
+  -- the Timeline view); drop any stale saved option.
+  CoolPlanDB.options.showBoss = nil
+  -- One-time: apply the recommended default profile to existing installs so
   -- everyone converges on the tuned out-of-box settings once. Frame positions,
   -- minimap and window size are intentionally left untouched. New installs get
   -- these straight from `defaults` above. (Supersedes the earlier per-key
@@ -125,7 +127,6 @@ function DB.Init()
     opt.textColor = { r = 1, g = 1, b = 1 }
     opt.showQueue = true
     opt.queueCount = 2
-    opt.showBoss = false
     CoolPlanDB._migrDefaultsV2 = true
   end
   -- One-time: boss timelines were once SHARED at the encounter level. They are

@@ -126,22 +126,25 @@ local function run(cues, opts)
   return true
 end
 
--- Categories shown to EVERYONE regardless of "only me": only raid-wide
--- defensives (공생기) are group-relevant, so a player should see them even
--- when they belong to someone else. Healer cooldowns (healer_cd / 힐러 쿨기)
+-- Categories shown to EVERYONE regardless of "only me": group-relevant cues a
+-- player should see even when they belong to someone else — raid-wide defensives
+-- (공생기 / raid_defensive) and Bloodlust/Heroism (bloodlust), since the whole
+-- party plans around the lust window. Healer cooldowns (healer_cd / 힐러 쿨기)
 -- are NOT here — they are self-only and filtered to the local character when
 -- filterToMe is on, like every other non-raid-wide category.
-local ALWAYS_SHOWN = { raid_defensive = true }
+local ALWAYS_SHOWN = { raid_defensive = true, bloodlust = true }
 
--- Build the combined cue list:
---  • cooldowns (kind="cd")  — raid_defensive shown to all; others "only me" + enabled categories
---  • boss mechanics (kind="boss") — only when showBoss (off by default; kept out of alerts)
+-- Build the cue list of cooldowns (kind="cd"): raid_defensive + bloodlust shown
+-- to all; others "only me" + enabled categories. Boss mechanics are NOT cued
+-- here — boss timelines are display-only (the Timeline view's red boss track),
+-- never on-screen/sound/TTS alerts (BigWigs/DBM already cover boss mechanics).
 -- previewAll: the Timeline "Test" is a preview of the whole plan, so it must NOT
 -- filter to the logged-in character's name or hide categories — otherwise testing
 -- on a different char (or with log/team names that don't match) shows nothing.
 -- forPlayer (preview only): show that exact player's casts (+ always-shown
 -- categories), ignoring the live "only me"/category filters.
-local function buildCues(reminders, boss, previewAll, forPlayer)
+-- `_boss` is accepted (call-site symmetry) but unused: boss cues are not fired.
+local function buildCues(reminders, _boss, previewAll, forPlayer)
   local o = ns.DB.Options()
   local cues = {}
   for _, r in ipairs(reminders or {}) do
@@ -156,14 +159,6 @@ local function buildCues(reminders, boss, previewAll, forPlayer)
       cues[#cues + 1] = {
         kind = "cd", timeMs = r.timeMs, spellId = r.spellId,
         player = r.player, category = r.category, spellName = r.spellName, alert = r.alert,
-      }
-    end
-  end
-  if o.showBoss and boss then
-    for _, b in ipairs(boss) do
-      cues[#cues + 1] = {
-        kind = "boss", timeMs = b.timeMs, spellId = b.spellId,
-        bossType = b.type, spellName = b.spellName,
       }
     end
   end
@@ -186,9 +181,7 @@ function Scheduler.StartDemo()
   local me = UnitName("player")
   local demo = {
     { kind = "cd",   timeMs = 3000,  spellId = 740,   player = me, spellName = "Tranquility" },
-    { kind = "boss", timeMs = 6000,  spellId = 100,   bossType = "tank_buster", spellName = "Doom Bolt" },
     { kind = "cd",   timeMs = 8000,  spellId = 48707, player = me, spellName = "Anti-Magic Shell" },
-    { kind = "boss", timeMs = 11000, spellId = 101,   bossType = "raid_aoe", spellName = "Shadow Nova" },
     { kind = "cd",   timeMs = 13000, spellId = 31884, player = me, spellName = "Avenging Wrath" },
   }
   activeId = -1
@@ -205,7 +198,7 @@ end
 -- Live preview of a plan, with no real encounter: virtual clock from 0.
 -- `reminders`/`boss` come from a saved note. `speed` (default 1) accelerates
 -- the virtual clock. `onTick(elapsed, total)` drives the Timeline playhead.
--- Honors the same filterToMe / category / showBoss options as a real pull.
+-- Honors the same filterToMe / category options as a real pull.
 -- forPlayer: "__all__" = everyone, "<name>" = that player, nil/"" = the live
 -- "only my character" filter (with a whole-plan fallback if it leaves nothing).
 function Scheduler.StartPreview(reminders, boss, speed, onTick, forPlayer)
