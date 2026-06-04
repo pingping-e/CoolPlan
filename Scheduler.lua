@@ -170,12 +170,12 @@ local function buildCues(reminders, boss, previewAll, forPlayer)
   return cues
 end
 
--- Start from the encounter's ACTIVE plan + shared boss timeline.
+-- Start from the encounter's ACTIVE plan (boss timeline lives on the plan).
 function Scheduler.Start(encounterID)
   local e = ns.DB.GetEncounter(encounterID)
   if not e then return false end
   local plan = e.plans[e.active]
-  local cues = buildCues(plan and plan.reminders or {}, e.boss)
+  local cues = buildCues(plan and plan.reminders or {}, plan and plan.boss)
   if #cues == 0 then return false end
   activeId = encounterID
   return run(cues)

@@ -141,7 +141,7 @@ end
 local function renderCanvas()
   local e, p = currentNote()
   local reminders = (p and p.reminders) or {}
-  local boss = (e and e.boss) or {}
+  local boss = (p and p.boss) or {}
 
   -- compute time extent
   local maxMs = 1000
@@ -319,7 +319,7 @@ local function startTest(speed)
     if status then status:SetText("|cffff8888No note selected.|r") end
     return
   end
-  local ok = ns.Scheduler.StartPreview(p.reminders, e and e.boss, speed,
+  local ok = ns.Scheduler.StartPreview(p.reminders, p.boss, speed,
     function(elapsed) setPlayhead(elapsed) end, selPreviewAs)
   if not ok then
     if status then status:SetText("|cffffcc00Nothing to play — this note has no cooldowns. Pick another boss / note above.|r") end

@@ -1,7 +1,8 @@
 -- Saved Plans page: a per-dungeon/boss browser of YOUR saved notes.
 -- Top: Category dropdown (Mythic+ / Raid) → Dungeon/Instance dropdown → Boss
--- dropdown. Below: the selected boss's saved boss-timeline row + cooldown plans,
--- each with Use / Rename / Delete / Export / Share.
+-- dropdown. Below: the selected boss's saved cooldown plans, each with Use /
+-- Rename / Delete / Export / Share. A plan that carries a boss timeline shows a
+-- "+boss" tag; the boss travels with the plan (deleting the plan removes it).
 -- Embedded into the Window shell via Manager.BuildPage(host).
 
 local _, ns = ...
@@ -105,9 +106,6 @@ local function buildItems()
   if not selEnc then return items end
   local e = ns.DB.GetEncounter(selEnc)
   if not e then return items end
-  if e.boss and #e.boss > 0 then
-    items[#items + 1] = { kind = "boss", id = selEnc, e = e }
-  end
   for i, p in ipairs(e.plans) do
     items[#items + 1] = { kind = "plan", id = selEnc, index = i, e = e, p = p }
   end
@@ -138,37 +136,27 @@ function Manager.Refresh()
     row:Show()
     local e, id = it.e, it.id
 
-    if it.kind == "boss" then
-      row.text:SetText(("|cffff7777Boss timeline|r |cff888888(%d mech)|r"):format(#e.boss))
-      row.use:Hide()
-      row.ren:Hide()
-      row.shr:Hide()
-      row.del:Show(); row.del:SetScript("OnClick", ns.wrap(function() ns.DB.DeleteBoss(id); Manager.Refresh() end))
-      row.exp:Show(); row.exp:SetScript("OnClick", ns.wrap(function()
-        ns.Editor.SetText(ns.Format.Serialize(ns.DB.ToSerializable(id), { source = "addon" }))
-      end))
-    else
-      local active = (e.active == it.index)
-      row.text:SetText(("%s|cff88ccff%s|r |cff888888(%d cd)|r"):format(
-        active and "|cff66ff66> |r" or "", it.p.label, #it.p.reminders))
-      row.use:Show()
-      row.use:SetText(active and "Active" or "Use")
-      row.use:SetScript("OnClick", ns.wrap(function() ns.DB.SetActive(id, it.index); Manager.Refresh() end))
-      row.ren:Show()
-      row.ren:SetScript("OnClick", ns.wrap(function() promptRename(id, it.index, it.p.label) end))
-      row.shr:Show()
-      row.shr:SetScript("OnClick", ns.wrap(function()
-        ns.DB.SetActive(id, it.index)   -- share what's shown on this row
-        ns.Comm.ShareEncounter(id)
-        Manager.Refresh()
-      end))
-      row.del:Show()
-      row.del:SetScript("OnClick", ns.wrap(function() ns.DB.DeletePlan(id, it.index); Manager.Refresh() end))
-      row.exp:Show()
-      row.exp:SetScript("OnClick", ns.wrap(function()
-        ns.Editor.SetText(ns.Format.Serialize(ns.DB.ToSerializable(id, it.index), { source = "addon" }))
-      end))
-    end
+    local active = (e.active == it.index)
+    local bossTag = (it.p.boss and #it.p.boss > 0) and " |cffff7777+boss|r" or ""
+    row.text:SetText(("%s|cff88ccff%s|r |cff888888(%d cd)|r%s"):format(
+      active and "|cff66ff66> |r" or "", it.p.label, #it.p.reminders, bossTag))
+    row.use:Show()
+    row.use:SetText(active and "Active" or "Use")
+    row.use:SetScript("OnClick", ns.wrap(function() ns.DB.SetActive(id, it.index); Manager.Refresh() end))
+    row.ren:Show()
+    row.ren:SetScript("OnClick", ns.wrap(function() promptRename(id, it.index, it.p.label) end))
+    row.shr:Show()
+    row.shr:SetScript("OnClick", ns.wrap(function()
+      ns.DB.SetActive(id, it.index)   -- share what's shown on this row
+      ns.Comm.ShareEncounter(id)
+      Manager.Refresh()
+    end))
+    row.del:Show()
+    row.del:SetScript("OnClick", ns.wrap(function() ns.DB.DeletePlan(id, it.index); Manager.Refresh() end))
+    row.exp:Show()
+    row.exp:SetScript("OnClick", ns.wrap(function()
+      ns.Editor.SetText(ns.Format.Serialize(ns.DB.ToSerializable(id, it.index), { source = "addon" }))
+    end))
   end
 
   for i = #items + 1, #rows do rows[i]:Hide() end

@@ -99,10 +99,11 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
     local n = 0
     for id, e in pairs(ns.DB.Library()) do
       n = n + 1
-      out(("  [%d] %s — %d plan(s)%s"):format(
-        id, e.name or "?", #e.plans, (e.boss and #e.boss > 0) and (", boss x" .. #e.boss) or ""))
+      out(("  [%d] %s — %d plan(s)"):format(id, e.name or "?", #e.plans))
       for i, p in ipairs(e.plans) do
-        out(("       %s %s (%d cd)"):format(i == e.active and "|cff66ff66>|r" or " ", p.label, #p.reminders))
+        out(("       %s %s (%d cd%s)"):format(
+          i == e.active and "|cff66ff66>|r" or " ", p.label, #p.reminders,
+          (p.boss and #p.boss > 0) and (", boss x" .. #p.boss) or ""))
       end
     end
     if n == 0 then out("no plans imported yet. /coolplan edit to paste one.") end

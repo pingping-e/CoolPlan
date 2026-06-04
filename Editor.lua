@@ -111,16 +111,17 @@ function Editor.BuildPage(host)
     local typed = host.nameBox:GetText()
     if typed == "" then typed = nil end
 
-    local added, bossOnly, nRem, nBoss = 0, 0, 0, 0
+    local added, nRem, nBoss = 0, 0, 0
     for id, parsed in pairs(plans) do
       local label = (nEnc == 1) and typed or nil
       nRem = nRem + (parsed.reminders and #parsed.reminders or 0)
       nBoss = nBoss + (parsed.boss and #parsed.boss or 0)
+      -- boss abilities ride along on the same plan (one body)
       local idx = ns.DB.AddPlan(id, parsed.name, label, parsed.reminders, parsed.boss)
-      if idx == 0 then bossOnly = bossOnly + 1 else added = added + 1 end
+      if idx ~= 0 then added = added + 1 end
     end
     host.nameBox:SetText("")
-    if nRem == 0 and bossOnly == 0 then
+    if nRem == 0 and nBoss == 0 then
       -- Encounters parsed but no cooldown rows. Surface the first data row
       -- exactly as stored (pipes shown literally so chat doesn't eat them) to
       -- pin down any remaining delimiter mangling by the EditBox.
@@ -137,8 +138,8 @@ function Editor.BuildPage(host)
       host.status:SetText(("|cffffcc00Added %d plan(s) but 0 cooldowns parsed (text length %d — not truncated). See chat for a diagnostic line.|r"):format(
         added, #raw))
     else
-      host.status:SetText(("|cff66ff66Added %d plan(s): %d cooldowns, %d boss cues%s.|r"):format(
-        added, nRem, nBoss, bossOnly > 0 and (" (%d boss-only)"):format(bossOnly) or ""))
+      host.status:SetText(("|cff66ff66Added %d plan(s): %d cooldowns, %d boss cues.|r"):format(
+        added, nRem, nBoss))
     end
     if ns.Manager then ns.Manager.Refresh() end
     if ns.Timeline then ns.Timeline.Refresh() end

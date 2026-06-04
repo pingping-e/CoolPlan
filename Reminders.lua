@@ -101,6 +101,11 @@ local function buildHud()
     local b = ns.Style and ns.Style.colors.bg
     if b then f.bar.bg:SetColorTexture(b[1], b[2], b[3], 0.7) else f.bar.bg:SetColorTexture(0, 0, 0, 0.5) end
   end
+  -- name overlaid INSIDE the bar (bar style). It is a CHILD of the bar so it
+  -- renders ABOVE the fill texture instead of being hidden beneath it.
+  f.barName = f.bar:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+  f.barName:SetJustifyH("LEFT")
+  f.barName:Hide()
 
   f.label = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   f.label:SetPoint("BOTTOM", f, "TOP", 0, 2)
@@ -178,12 +183,14 @@ local function layoutHud(o)
   end
   name:SetTextColor(c.r, c.g, c.b)
   count:SetTextColor(1, 1, 1)
+  if hud.barName then hud.barName:Hide() end -- only the bar style uses the in-bar name
 
   local PAD = 6
 
   if style == "bar" then
     -- thick horizontal bar with a small square icon on the left, name overlaid
-    -- left, time either inside-right or as a separate right field.
+    -- left INSIDE the bar (drawn above the fill via the bar-child barName), time
+    -- either inside the icon or as a separate right field.
     local barH = math.max(20, size)
     local barW = 300
     icon:SetSize(barH, barH)
@@ -194,9 +201,14 @@ local function layoutHud(o)
     bar:SetSize(barW, barH)
     bar:Show()
 
-    name:SetPoint("LEFT", bar, "LEFT", 6, 0)
-    name:SetJustifyH("LEFT")
-    name:Show()
+    name:Hide()
+    if fontPath and hud.barName.SetFont then hud.barName:SetFont(fontPath, size, "OUTLINE") end
+    hud.barName:ClearAllPoints()
+    hud.barName:SetPoint("LEFT", bar, "LEFT", 6, 0)
+    hud.barName:SetWidth(barW - 12)
+    hud.barName:SetJustifyH("LEFT")
+    hud.barName:SetTextColor(c.r, c.g, c.b)
+    hud.barName:Show()
 
     local totalW = PAD + barH + 4 + barW + PAD
     if tpos == "icon" then
@@ -259,6 +271,141 @@ local function layoutHud(o)
 end
 ns.Reminders._layoutHud = layoutHud
 
+-- ── upcoming queue rows (mini-HUD at 50% — follows hudStyle + timePos) ─────────
+-- Each row is a scaled-down copy of the HUD: it honors the same display style
+-- ("icon" | "iconName" | "bar") and time position ("icon" | "right") so the
+-- queue reads as the same alert, just smaller. RenderTick only sets values;
+-- this function owns all Show/Hide + anchors + fonts (mirrors layoutHud).
+local QUEUE_PAD = 6
+local QUEUE_GAP = 3
+local QUEUE_SCALE = 0.5
+
+local function ensureQueueRow(i)
+  local row = queue.rows[i]
+  if row then return row end
+  row = CreateFrame("Frame", nil, queue)
+  row.icon = row:CreateTexture(nil, "ARTWORK")
+  row.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+  row.name = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  row.name:SetJustifyH("LEFT")
+  row.count = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  row.bar = CreateFrame("StatusBar", nil, row)
+  row.bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+  row.bar:SetMinMaxValues(0, 1)
+  row.bar:SetValue(1)
+  row.bar.bg = row.bar:CreateTexture(nil, "BACKGROUND")
+  row.bar.bg:SetAllPoints()
+  do
+    local b = ns.Style and ns.Style.colors.bg
+    if b then row.bar.bg:SetColorTexture(b[1], b[2], b[3], 0.7) else row.bar.bg:SetColorTexture(0, 0, 0, 0.5) end
+  end
+  -- in-bar name (child of the bar → renders above the fill) for the bar style
+  row.barName = row.bar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  row.barName:SetJustifyH("LEFT")
+  row.barName:Hide()
+  queue.rows[i] = row
+  return row
+end
+
+-- Lay out a single row's regions for the given style/timePos. Returns w, h.
+local function layoutQueueRow(row, style, tpos, size, countSize, isize, fontPath, c)
+  local icon, name, count, bar = row.icon, row.name, row.count, row.bar
+  icon:ClearAllPoints(); name:ClearAllPoints(); count:ClearAllPoints(); bar:ClearAllPoints()
+  if fontPath then
+    if name.SetFont then name:SetFont(fontPath, size, "OUTLINE") end
+    if count.SetFont then count:SetFont(fontPath, countSize, "OUTLINE") end
+  end
+  name:SetTextColor(c.r, c.g, c.b)
+  count:SetTextColor(1, 1, 1)
+  if row.barName then row.barName:Hide() end -- only the bar style uses the in-bar name
+  local PAD = 3
+
+  if style == "bar" then
+    -- name overlaid left INSIDE the bar, drawn above the fill via barName
+    local barH = math.max(10, size)
+    local barW = math.floor(300 * QUEUE_SCALE)
+    icon:SetSize(barH, barH); icon:SetPoint("LEFT", row, "LEFT", PAD, 0); icon:Show()
+    bar:SetPoint("LEFT", icon, "RIGHT", 3, 0); bar:SetSize(barW, barH); bar:Show()
+    name:Hide()
+    if fontPath and row.barName.SetFont then row.barName:SetFont(fontPath, size, "OUTLINE") end
+    row.barName:ClearAllPoints()
+    row.barName:SetPoint("LEFT", bar, "LEFT", 4, 0)
+    row.barName:SetWidth(barW - 8)
+    row.barName:SetJustifyH("LEFT")
+    row.barName:SetTextColor(c.r, c.g, c.b)
+    row.barName:Show()
+    local totalW = PAD + barH + 3 + barW + PAD
+    if tpos == "icon" then
+      count:SetPoint("CENTER", icon, "CENTER", 0, 0); count:SetJustifyH("CENTER")
+      if fontPath and count.SetFont then count:SetFont(fontPath, math.max(8, barH - 4), "OUTLINE") end
+    else
+      count:SetPoint("LEFT", bar, "RIGHT", 5, 0); count:SetJustifyH("LEFT")
+      totalW = totalW + 5 + math.max(16, size)
+    end
+    count:Show()
+    return totalW, barH
+
+  elseif style == "icon" then
+    icon:SetSize(isize, isize); icon:SetPoint("LEFT", row, "LEFT", PAD, 0); icon:Show()
+    bar:Hide(); name:Hide()
+    local totalW = PAD + isize + PAD
+    if tpos == "icon" then
+      count:SetPoint("CENTER", icon, "CENTER", 0, 0); count:SetJustifyH("CENTER")
+    else
+      count:SetPoint("LEFT", icon, "RIGHT", 5, 0); count:SetJustifyH("LEFT")
+      totalW = totalW + 5 + math.max(16, size)
+    end
+    count:Show()
+    return totalW, isize
+
+  else -- iconName
+    icon:SetSize(isize, isize); icon:SetPoint("LEFT", row, "LEFT", PAD, 0); icon:Show()
+    local nameW = math.floor(240 * QUEUE_SCALE)
+    name:SetWidth(nameW); name:SetPoint("LEFT", icon, "RIGHT", 6, 0); name:Show()
+    bar:Hide()
+    local totalW = PAD + isize + 6 + nameW + PAD
+    if tpos == "icon" then
+      count:SetPoint("CENTER", icon, "CENTER", 0, 0); count:SetJustifyH("CENTER")
+    else
+      count:SetPoint("LEFT", name, "RIGHT", 5, 0); count:SetJustifyH("LEFT")
+      totalW = totalW + 5 + math.max(16, size)
+    end
+    count:Show()
+    return totalW, isize
+  end
+end
+
+local function layoutQueueRows(o)
+  local style = o.hudStyle or "iconName"
+  local tpos = o.timePos or "icon"
+  local fontPath = GameFontNormalHuge:GetFont()
+  local size = math.max(8, math.floor((o.fontSize or 28) * QUEUE_SCALE))
+  local countSize = (tpos == "icon") and (size + math.floor(10 * QUEUE_SCALE)) or size
+  local isize = math.max(14, math.floor(ICON_SIZE * QUEUE_SCALE))
+  local c = o.textColor or { r = 1, g = 0.95, b = 0.4 }
+  local top = 16 -- header band
+  local n = o.queueCount or 3
+
+  local maxW, rowH = 1, isize
+  for i = 1, n do
+    local row = ensureQueueRow(i)
+    local w, h = layoutQueueRow(row, style, tpos, size, countSize, isize, fontPath, c)
+    row:SetSize(w, h)
+    row:Hide()
+    if w > maxW then maxW = w end
+    rowH = h
+  end
+  for i = 1, n do
+    queue.rows[i]:ClearAllPoints()
+    queue.rows[i]:SetPoint("TOPLEFT", QUEUE_PAD, -(top + (i - 1) * (rowH + QUEUE_GAP)))
+  end
+  for i = n + 1, #queue.rows do
+    if queue.rows[i] and queue.rows[i].Hide then queue.rows[i]:Hide() end
+  end
+  queue:SetWidth(maxW + QUEUE_PAD * 2)
+  queue:SetHeight(top + n * (rowH + QUEUE_GAP) + QUEUE_PAD)
+end
+
 function Reminders.Init()
   ensureFrames()
   Reminders.ApplyOptions()
@@ -271,27 +418,15 @@ function Reminders.ApplyOptions()
   local c = o.textColor or { r = 1, g = 0.95, b = 0.4 }
 
   hud:SetScale(o.scale or 1)
+  queue:SetScale(o.scale or 1) -- queue tracks the global scale; rows are ~60% within
   -- style/timePos/font ownership lives in layoutHud (anchors + Show/Hide + fonts)
   layoutHud(o)
   hud.bar:SetStatusBarColor(c.r, c.g, c.b)
   restorePosition(hud, o.hud)
   restorePosition(queue, o.queueAnchor)
 
-  -- (re)build queue rows to match queueCount
-  local n = o.queueCount or 3
-  for i = 1, n do
-    if not queue.rows[i] then
-      local fs = queue:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      fs:SetPoint("TOPLEFT", 4, -2 - i * 16)
-      fs:SetJustifyH("LEFT")
-      queue.rows[i] = fs
-    end
-  end
-  for i = n + 1, #queue.rows do
-    queue.rows[i]:SetText("")
-    queue.rows[i]:Hide()
-  end
-  queue:SetHeight(20 + n * 16)
+  -- (re)build queue rows as mini-HUD rows (icon + name + countdown) at ~60% size
+  layoutQueueRows(o)
 
   if not moverOn then Reminders.SetLocked(true) end -- keep mover mode intact
 end
@@ -323,14 +458,23 @@ function Reminders.ToggleMover()
     hud:EnableMouse(true)
     queue:EnableMouse(true)
     layoutHud(o) -- preview matches the current style/timePos
+    layoutQueueRows(o) -- ensure queue rows exist + are sized for the sample
     -- show samples so they can be dragged
     if hud.icon then hud.icon:SetTexture(136235) end -- generic icon
     hud.name:SetText("Cooldown name")
     hud.count:SetText("3")
     hud.bar:SetValue(0.6)
     hud.bg:Show(); hud.label:Show(); hud:Show(); hud._active = true
-    queue.rows[1] = queue.rows[1]
-    if queue.rows[1] then queue.rows[1]:SetText("|cffaaaaaa0:18  Next cooldown (in 12s)|r"); queue.rows[1]:Show() end
+    local qr = queue.rows[1]
+    if qr and qr.icon then
+      local mc = o.textColor or { r = 1, g = 0.95, b = 0.4 }
+      qr.icon:SetTexture(136235); qr.icon:Show()
+      qr.name:SetText("Next cooldown"); qr.name:SetTextColor(mc.r, mc.g, mc.b)
+      if qr.barName then qr.barName:SetText("Next cooldown"); qr.barName:SetTextColor(mc.r, mc.g, mc.b) end
+      qr.count:SetText("12"); qr.count:SetTextColor(1, 1, 1)
+      if qr.bar then qr.bar:SetValue(0.6); qr.bar:SetStatusBarColor(mc.r, mc.g, mc.b) end
+      qr:Show()
+    end
     queue.bg:Show(); queue.label:Show(); queue:Show(); queue._live = true
     ns.Print("move mode ON — drag the alert and queue, then /coolplan lock.")
   else
@@ -355,9 +499,15 @@ function Reminders.RenderTick(active, upcoming, o)
     -- icon texture only; layoutHud already decided icon Show/Hide for the style
     if icon then hud.icon:SetTexture(icon) end
     local c = isBoss and { r = 1, g = 0.45, b = 0.3 } or (o.textColor or { r = 1, g = 0.95, b = 0.4 })
-    -- update name TEXT/color only; layoutHud owns whether name is shown for the style
-    hud.name:SetText((isBoss and "|cffff7777[BOSS]|r " or "") .. labelFor(cue))
+    -- update name TEXT/color only; layoutHud owns whether name (or barName, the
+    -- in-bar variant for the "bar" style) is shown for the style
+    local nameText = (isBoss and "|cffff7777[BOSS]|r " or "") .. labelFor(cue)
+    hud.name:SetText(nameText)
     hud.name:SetTextColor(c.r, c.g, c.b)
+    if hud.barName then
+      hud.barName:SetText(nameText)
+      hud.barName:SetTextColor(c.r, c.g, c.b)
+    end
     local total = active.total or (o.leadSeconds or 4)
     local rem = active.remaining
     if rem > 0 then
@@ -377,16 +527,35 @@ function Reminders.RenderTick(active, upcoming, o)
   end
 
   if o.showQueue and upcoming and #upcoming > 0 then
+    local def = o.textColor or { r = 1, g = 0.95, b = 0.4 }
+    local style = o.hudStyle or "iconName"
+    local lead = o.leadSeconds or 4
     for i, row in ipairs(queue.rows) do
       local item = upcoming[i]
-      if item then
+      if item and row.icon then
         local cue = item.cue
-        local tag = cue.kind == "boss" and "|cffff7777[B]|r " or ""
-        row:SetText(("%s|cffffd200%s|r  %s |cff888888(in %ds)|r"):format(
-          tag, ns.Format.FormatTime(cue.timeMs), labelFor(cue), math.max(0, math.ceil(item.remaining))))
+        local isBoss = cue.kind == "boss"
+        local _, icon = spellInfo(cue.spellId)
+        if icon then row.icon:SetTexture(icon) end
+        row.icon:Show()
+        local c = isBoss and { r = 1, g = 0.45, b = 0.3 } or def
+        -- layoutQueueRow owns name vs barName Show/Hide per style; just set both
+        local nameText = (isBoss and "|cffff7777[B]|r " or "") .. labelFor(cue)
+        row.name:SetText(nameText)
+        row.name:SetTextColor(c.r, c.g, c.b)
+        if row.barName then
+          row.barName:SetText(nameText)
+          row.barName:SetTextColor(c.r, c.g, c.b)
+        end
+        row.count:SetText(tostring(math.max(0, math.ceil(item.remaining))))
+        row.count:SetTextColor(1, 1, 1)
+        if style == "bar" and row.bar then
+          row.bar:SetValue(math.max(0, math.min(1, lead > 0 and item.remaining / lead or 0)))
+          row.bar:SetStatusBarColor(c.r, c.g, c.b)
+        end
         row:Show()
-      else
-        row:SetText(""); row:Hide()
+      elseif row.Hide then
+        row:Hide()
       end
     end
     queue._live = true
