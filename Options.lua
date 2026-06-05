@@ -329,6 +329,10 @@ function Options.BuildPage(host)
   header(rcol, "Position", RX, -404)
   button(rcol, "Move frames", 120, RX, -426, function() ns.Reminders.ToggleMover() end)
   button(rcol, "Lock", 70, RX + 128, -426, function() ns.Reminders.SetLocked(true) end)
+  button(rcol, "Reset", 90, RX, -452, function() ns.Reminders.ResetPositions() end)
+  checkbox(rcol, "Show grid", RX, -480,
+    function() return o.showGrid end,
+    function(v) o.showGrid = v end)
 
   -- ── categories (moved up into the freed left/middle space; responsive grid
   -- that reflows its column count with the window width) ──

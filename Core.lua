@@ -78,6 +78,8 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
   elseif cmd == "lock" then
     ns.Reminders.SetLocked(true)
     out("frames locked.")
+  elseif cmd == "reset" then
+    ns.Reminders.ResetPositions()
   elseif cmd == "testenc" then
     local id = tonumber(rest)
     if id then
@@ -108,6 +110,6 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
     end
     if n == 0 then out("no plans imported yet. /coolplan edit to paste one.") end
   else
-    out("commands: (blank)=open | timeline | plans | import | options | minimap | share | list | test | demo | move | lock | testenc <id> | stop | errors | debug")
+    out("commands: (blank)=open | timeline | plans | import | options | minimap | share | list | test | demo | move | lock | reset | testenc <id> | stop | errors | debug")
   end
 end)

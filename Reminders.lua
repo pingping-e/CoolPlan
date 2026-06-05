@@ -11,6 +11,10 @@ local LINGER = 1.0 -- seconds to keep showing an alert after its cast time
 local hud, queue
 local moverOn = false
 local testTicker
+-- coordinate-input panel wiring (ElvUI-style nudge). Forward-declared so
+-- makeMovable / the mover toggles can reference them before the panel section
+-- defines them further down.
+local selectPosTarget, showPosPanel, onMoverDragTick, draggingFrame
 
 -- ── spell info ───────────────────────────────────────────────────────────────
 local function spellInfo(spellId)
@@ -42,6 +46,8 @@ local function restorePosition(frame, saved)
     saved.x or 0, saved.y or 0)
 end
 
+local GRID = 20 -- alignment grid spacing, in (UIParent) pixels
+
 local function savePosition(frame, saved)
   local point, _, relPoint, x, y = frame:GetPoint(1)
   saved.point = point or "CENTER"
@@ -53,13 +59,68 @@ end
 local function makeMovable(frame, saved)
   frame:SetMovable(true)
   frame:RegisterForDrag("LeftButton")
-  frame:SetScript("OnDragStart", function(self)
-    if not saved.locked then self:StartMoving() end
-  end)
-  frame:SetScript("OnDragStop", function(self)
+  -- clicking a frame in move mode selects it for the coordinate panel
+  frame:SetScript("OnMouseDown", ns.wrap(function(self)
+    if selectPosTarget then selectPosTarget(self) end
+  end))
+  frame:SetScript("OnDragStart", ns.wrap(function(self)
+    if not saved.locked then
+      self:StartMoving()
+      draggingFrame = self
+      if selectPosTarget then selectPosTarget(self) end
+    end
+  end))
+  frame:SetScript("OnDragStop", ns.wrap(function(self)
     self:StopMovingOrSizing()
+    draggingFrame = nil
     savePosition(self, saved)
-  end)
+    if onMoverDragTick then onMoverDragTick() end -- final coord refresh
+  end))
+end
+
+-- ── alignment grid overlay (shown only while moving) ─────────────────────────────
+local gridFrame
+local function buildGrid()
+  local g = CreateFrame("Frame", "CoolPlanGrid", UIParent)
+  g:SetAllPoints(UIParent)
+  g:SetFrameStrata("BACKGROUND")
+  g.lines = {}
+  local w, h = UIParent:GetWidth(), UIParent:GetHeight()
+  local cx, cy = w / 2, h / 2
+  local function line(isV, offset, center)
+    local t = g:CreateTexture(nil, "BACKGROUND")
+    if center then
+      t:SetColorTexture(1, 0.82, 0.2, 0.5) -- amber center guide
+    else
+      t:SetColorTexture(1, 1, 1, 0.10)
+    end
+    if isV then
+      t:SetWidth(center and 2 or 1)
+      t:SetPoint("TOP", g, "TOPLEFT", offset, 0)
+      t:SetPoint("BOTTOM", g, "BOTTOMLEFT", offset, 0)
+    else
+      t:SetHeight(center and 2 or 1)
+      t:SetPoint("LEFT", g, "TOPLEFT", 0, -offset)
+      t:SetPoint("RIGHT", g, "TOPRIGHT", 0, -offset)
+    end
+    g.lines[#g.lines + 1] = t
+  end
+  -- grid aligned to screen centre (so it matches CENTER-anchored offsets/snap)
+  for x = cx, w, GRID do line(true, x, x == cx) end
+  for x = cx - GRID, 0, -GRID do line(true, x, false) end
+  for y = cy, h, GRID do line(false, y, y == cy) end
+  for y = cy - GRID, 0, -GRID do line(false, y, false) end
+  g:Hide()
+  return g
+end
+
+local function setGrid(show)
+  if show then
+    if not gridFrame then gridFrame = buildGrid() end
+    gridFrame:Show()
+  elseif gridFrame then
+    gridFrame:Hide()
+  end
 end
 
 -- ── frame construction ──────────────────────────────────────────────────────────
@@ -429,6 +490,7 @@ function Reminders.ApplyOptions()
   layoutQueueRows(o)
 
   if not moverOn then Reminders.SetLocked(true) end -- keep mover mode intact
+  if moverOn then setGrid(o.showGrid) end -- live-toggle the grid from Options
 end
 
 -- ── lock / mover ────────────────────────────────────────────────────────────────
@@ -441,11 +503,49 @@ function Reminders.SetLocked(locked)
   queue:EnableMouse(not locked)
   if locked then
     moverOn = false
+    setGrid(false)
+    if showPosPanel then showPosPanel(false) end
     if not (hud._active) then hud:Hide() end
     hud.bg:Hide(); hud.label:Hide()
     queue.bg:Hide(); queue.label:Hide()
     if not queue._live then queue:Hide() end
   end
+end
+
+-- Reset HUD + queue to their out-of-box positions (the "Reset" button).
+-- Queue is placed directly below the HUD, left edges aligned, by anchoring it
+-- relative to the HUD frame — so it works correctly regardless of HUD width.
+local QUEUE_BELOW_GAP = 8
+function Reminders.ResetPositions()
+  ensureFrames()
+  local o = ns.DB.Options()
+  -- 1. Restore HUD to its canonical default, then lay it out for the active
+  --    style/timePos so the ICON sits exactly where it will render. The frame
+  --    WIDTH changes per style (icon / iconName / bar), and the frame is
+  --    CENTER-anchored, so the frame's left edge shifts with style — but the
+  --    icon is the stable visual anchor the user lines up against.
+  local hudDef = ns.DB.DefaultPositions()
+  for k, v in pairs(hudDef) do o.hud[k] = v end
+  restorePosition(hud, o.hud)
+  layoutHud(o)
+
+  -- 2. Align the queue's top-left under the HUD ICON (not the frame edge), then
+  --    convert that to UIParent-CENTER-relative coordinates so the
+  --    savePosition/restorePosition pair (which is UIParent-based) reproduces
+  --    the same spot on /reload.
+  local anchor = hud.icon or hud
+  queue:ClearAllPoints()
+  queue:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -QUEUE_BELOW_GAP)
+  local left, top = queue:GetLeft(), queue:GetTop()
+  local cx, cy = UIParent:GetCenter()
+  if left and top and cx and cy then
+    queue:ClearAllPoints()
+    queue:SetPoint("TOPLEFT", UIParent, "CENTER", left - cx, top - cy)
+  end
+
+  -- 3. Persist the resolved UIParent-relative coordinates.
+  savePosition(queue, o.queueAnchor)
+  ns.Print("frame positions reset to default.")
 end
 
 function Reminders.ToggleMover()
@@ -455,6 +555,8 @@ function Reminders.ToggleMover()
   if moverOn then
     o.hud.locked = false
     o.queueAnchor.locked = false
+    setGrid(o.showGrid)
+    if showPosPanel then showPosPanel(true) end
     hud:EnableMouse(true)
     queue:EnableMouse(true)
     layoutHud(o) -- preview matches the current style/timePos
@@ -476,12 +578,126 @@ function Reminders.ToggleMover()
       qr:Show()
     end
     queue.bg:Show(); queue.label:Show(); queue:Show(); queue._live = true
-    ns.Print("move mode ON — drag the alert and queue, then /coolplan lock.")
+    ns.Print("move mode ON — drag the frames or type X/Y in the panel, then /coolplan lock.")
   else
     hud._active = false
     queue._live = false
     Reminders.SetLocked(true)
     ns.Print("move mode OFF — positions saved.")
+  end
+end
+
+-- ── coordinate-input panel (ElvUI-style: type exact X/Y for the selected frame) ──
+-- A small draggable panel shown during move mode. Click the HUD or queue to
+-- select it; its current offset (from screen centre) fills the X/Y boxes and
+-- updates live while you drag. Type a number + Enter to place it precisely.
+local posPanel, posTarget
+
+local function targetSavedFor(f)
+  local o = ns.DB.Options()
+  return (f == queue) and o.queueAnchor or o.hud
+end
+
+local function refreshPosBoxes()
+  if not (posPanel and posTarget) then return end
+  local _, _, _, x, y = posTarget:GetPoint(1)
+  x = math.floor((x or 0) + 0.5)
+  y = math.floor((y or 0) + 0.5)
+  posPanel.title:SetText(posTarget == queue and "Queue" or "Alert (HUD)")
+  posPanel.xb.cur = x
+  posPanel.yb.cur = y
+  if not posPanel.xb:HasFocus() then posPanel.xb:SetText(tostring(x)) end
+  if not posPanel.yb:HasFocus() then posPanel.yb:SetText(tostring(y)) end
+end
+onMoverDragTick = refreshPosBoxes
+
+local function applyPos(axis, value)
+  if not posTarget then return end
+  local point, _, relPoint, x, y = posTarget:GetPoint(1)
+  x = x or 0
+  y = y or 0
+  if axis == "x" then x = value else y = value end
+  posTarget:ClearAllPoints()
+  posTarget:SetPoint(point or "CENTER", UIParent, relPoint or "CENTER", x, y)
+  savePosition(posTarget, targetSavedFor(posTarget))
+  refreshPosBoxes()
+end
+
+local function buildPosPanel()
+  local f = CreateFrame("Frame", "CoolPlanPosPanel", UIParent)
+  f:SetSize(160, 96)
+  f:SetFrameStrata("DIALOG")
+  -- Initial anchor is set by showPosPanel → selectPosTarget; this is just a safe fallback.
+  f:SetPoint("TOP", UIParent, "CENTER", 0, -40)
+  -- NOT movable: it stays anchored to the selected frame and follows it while dragging.
+  f:EnableMouse(true)
+
+  local bg = f:CreateTexture(nil, "BACKGROUND")
+  bg:SetAllPoints()
+  do
+    local p = ns.Style and ns.Style.colors.panel
+    if p then bg:SetColorTexture(p[1], p[2], p[3], 0.92) else bg:SetColorTexture(0, 0, 0, 0.85) end
+  end
+
+  f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  f.title:SetPoint("TOP", 0, -8)
+  f.title:SetText("Alert (HUD)")
+
+  local hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  hint:SetPoint("TOP", f.title, "BOTTOM", 0, -2)
+  hint:SetText("click a frame, type X/Y, Enter")
+
+  local function box(labelText, yOff, axis)
+    local lbl = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    lbl:SetPoint("TOPLEFT", 18, yOff)
+    lbl:SetText(labelText)
+    local eb = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    eb:SetSize(70, 18)
+    eb:SetPoint("LEFT", lbl, "RIGHT", 10, 0)
+    eb:SetAutoFocus(false)
+    eb.cur = 0
+    eb:SetScript("OnEnterPressed", ns.wrap(function(self)
+      local n = tonumber(self:GetText())
+      if n then applyPos(axis, math.floor(n + 0.5)) end
+      self:ClearFocus()
+    end))
+    eb:SetScript("OnEscapePressed", function(self) self:SetText(tostring(self.cur or 0)); self:ClearFocus() end)
+    eb:SetScript("OnEditFocusLost", function(self) self:SetText(tostring(self.cur or 0)) end)
+    return eb
+  end
+  f.xb = box("X", -44, "x")
+  f.yb = box("Y", -68, "y")
+
+  -- live-update the boxes while a frame is being dragged
+  f:SetScript("OnUpdate", function() if draggingFrame then refreshPosBoxes() end end)
+  return f
+end
+
+-- Re-anchor the coord panel to sit to the RIGHT of the given frame.
+-- Uses a relative SetPoint so it automatically follows the frame when dragged.
+local function anchorPanelToFrame(frame)
+  if not (posPanel and frame) then return end
+  posPanel:ClearAllPoints()
+  -- Prefer RIGHT side; panel is 160px wide.  A small gap (8px) keeps it readable.
+  posPanel:SetPoint("LEFT", frame, "RIGHT", 8, 0)
+end
+
+selectPosTarget = function(frame)
+  if frame ~= hud and frame ~= queue then return end
+  posTarget = frame
+  anchorPanelToFrame(frame)
+  refreshPosBoxes()
+end
+
+showPosPanel = function(show)
+  if show then
+    if not posPanel then posPanel = buildPosPanel() end
+    if not posTarget then posTarget = hud end
+    anchorPanelToFrame(posTarget)
+    posPanel:Show()
+    refreshPosBoxes()
+  elseif posPanel then
+    posPanel:Hide()
   end
 end
 

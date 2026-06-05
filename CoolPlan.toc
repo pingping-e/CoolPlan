@@ -2,7 +2,7 @@
 ## Title: CoolPlan
 ## Notes: On-screen / sound / TTS cooldown reminders during boss encounters, from plans exported by coolplan.team.
 ## Author: pingping-e
-## Version: 1.1.1
+## Version: 1.2.0
 ## SavedVariables: CoolPlanDB
 ## SavedVariablesPerCharacter: CoolPlanCharDB
 ## X-Website: https://coolplan.team

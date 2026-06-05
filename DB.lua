@@ -35,7 +35,10 @@ local defaults = {
     queueCount = 2,
     categoryEnabled = {},
     hud = { point = "CENTER", relPoint = "CENTER", x = 0, y = 200, locked = true },
-    queueAnchor = { point = "CENTER", relPoint = "CENTER", x = 0, y = 60, locked = true },
+    -- queue sits BELOW the HUD, left edges aligned (HUD is 440 wide → left edge
+    -- at -220 from screen centre; HUD bottom ≈ y 164, so 150 leaves a small gap).
+    queueAnchor = { point = "TOPLEFT", relPoint = "CENTER", x = -220, y = 150, locked = true },
+    showGrid = true,          -- show an alignment grid while in move mode
     lastPage = "timeline",
     minimap = { angle = 210, hide = false },
     windowW = 860, windowH = 640,
@@ -149,6 +152,14 @@ function DB.Init()
 end
 
 function DB.Options() return CoolPlanDB.options end
+-- Default frame positions (for the "Reset" button), copied so callers can't
+-- mutate the shared defaults table.
+function DB.DefaultPositions()
+  local d = defaults.options
+  return
+    { point = d.hud.point, relPoint = d.hud.relPoint, x = d.hud.x, y = d.hud.y },
+    { point = d.queueAnchor.point, relPoint = d.queueAnchor.relPoint, x = d.queueAnchor.x, y = d.queueAnchor.y }
+end
 function DB.Library() return CoolPlanCharDB.library end
 function DB.GetEncounter(id) return CoolPlanCharDB.library[id] end
 
