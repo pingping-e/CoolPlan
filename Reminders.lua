@@ -9,7 +9,8 @@ ns.Reminders = Reminders
 local LINGER = 1.0 -- seconds to keep showing an alert after its cast time
 
 local hud, queue
-local moverOn = false
+local moverOn = false -- frames draggable (+ grid + coord panel) whenever shown
+local testOn = false  -- sample preview frames visible (independent of moverOn)
 local testTicker
 -- coordinate-input panel wiring (ElvUI-style nudge). Forward-declared so
 -- makeMovable / the mover toggles can reference them before the panel section
@@ -472,6 +473,76 @@ function Reminders.Init()
   Reminders.ApplyOptions()
 end
 
+-- ── preview / move chrome ─────────────────────────────────────────────────────
+-- Fill the HUD + queue with sample content and show them. Used by the Test
+-- preview and by Move (so there's something to drag out of combat).
+local function showSample(o)
+  o = o or ns.DB.Options()
+  layoutHud(o)
+  layoutQueueRows(o)
+  if hud.icon then hud.icon:SetTexture(136235) end -- generic icon
+  hud.name:SetText("Cooldown name")
+  hud.count:SetText("3")
+  hud.bar:SetValue(0.6)
+  hud.bg:Show(); hud.label:Show(); hud:Show(); hud._active = true
+  local qr = queue.rows[1]
+  if qr and qr.icon then
+    local mc = o.textColor or { r = 1, g = 0.95, b = 0.4 }
+    qr.icon:SetTexture(136235); qr.icon:Show()
+    qr.name:SetText("Next cooldown"); qr.name:SetTextColor(mc.r, mc.g, mc.b)
+    if qr.barName then qr.barName:SetText("Next cooldown"); qr.barName:SetTextColor(mc.r, mc.g, mc.b) end
+    qr.count:SetText("12"); qr.count:SetTextColor(1, 1, 1)
+    if qr.bar then qr.bar:SetValue(0.6); qr.bar:SetStatusBarColor(mc.r, mc.g, mc.b) end
+    qr:Show()
+  end
+  queue.bg:Show(); queue.label:Show(); queue:Show(); queue._live = true
+end
+
+-- Options buttons register a label updater so "Move"⇄"Lock" / "Test frames"⇄
+-- "Hide test" track the live state (incl. when toggled via slash commands).
+local modeBtnUpdater
+local function notifyMode()
+  if modeBtnUpdater then modeBtnUpdater(moverOn, testOn) end
+end
+
+-- Single source of truth for the editing chrome (out of combat). Frame
+-- visibility (sample preview) = testOn or moverOn; drag affordances (mouse +
+-- grid + coord panel) = moverOn. Live combat is owned by RenderTick, which
+-- still freezes while moverOn (we only drag the preview, not live frames).
+local function refreshFrames(o)
+  o = o or ns.DB.Options()
+  hud:EnableMouse(moverOn)
+  queue:EnableMouse(moverOn)
+  o.hud.locked = not moverOn
+  o.queueAnchor.locked = not moverOn
+  -- Move only drags frames that Test makes visible — it does NOT show the sample
+  -- itself. Grid + coord panel are editing chrome, so they appear only when
+  -- there are actually visible frames to move (Test on AND Move on).
+  local editing = moverOn and testOn
+  setGrid(editing and o.showGrid)
+  if showPosPanel then showPosPanel(editing) end
+  if testOn then
+    showSample(o)
+  else
+    -- Drop the preview chrome. But if a live reminder is on screen (e.g. an
+    -- option was changed mid-combat), leave the frame to RenderTick — don't yank
+    -- a live alert. Out of combat there's nothing live, so hide outright.
+    hud.bg:Hide(); hud.label:Hide()
+    queue.bg:Hide(); queue.label:Hide()
+    if not InCombatLockdown() then
+      hud._active = false
+      queue._live = false
+      hud:Hide()
+      queue:Hide()
+    end
+  end
+  notifyMode()
+end
+
+function Reminders.IsMoving() return moverOn end
+function Reminders.IsTesting() return testOn end
+function Reminders.SetModeButtonUpdater(fn) modeBtnUpdater = fn; notifyMode() end
+
 -- ── apply options (scale / font / color / positions / lock / queue rows) ───────
 function Reminders.ApplyOptions()
   ensureFrames()
@@ -489,27 +560,15 @@ function Reminders.ApplyOptions()
   -- (re)build queue rows as mini-HUD rows (icon + name + countdown) at ~60% size
   layoutQueueRows(o)
 
-  if not moverOn then Reminders.SetLocked(true) end -- keep mover mode intact
-  if moverOn then setGrid(o.showGrid) end -- live-toggle the grid from Options
+  refreshFrames(o) -- show preview / drag chrome per testOn / moverOn (or hide)
 end
 
 -- ── lock / mover ────────────────────────────────────────────────────────────────
+-- Lock = stop dragging (Move off). The Test preview, if on, stays visible.
 function Reminders.SetLocked(locked)
   ensureFrames()
-  local o = ns.DB.Options()
-  o.hud.locked = locked
-  o.queueAnchor.locked = locked
-  hud:EnableMouse(not locked)
-  queue:EnableMouse(not locked)
-  if locked then
-    moverOn = false
-    setGrid(false)
-    if showPosPanel then showPosPanel(false) end
-    if not (hud._active) then hud:Hide() end
-    hud.bg:Hide(); hud.label:Hide()
-    queue.bg:Hide(); queue.label:Hide()
-    if not queue._live then queue:Hide() end
-  end
+  if locked then moverOn = false end
+  refreshFrames()
 end
 
 -- Reset HUD + queue to their out-of-box positions (the "Reset" button).
@@ -539,52 +598,46 @@ function Reminders.ResetPositions()
   local left, top = queue:GetLeft(), queue:GetTop()
   local cx, cy = UIParent:GetCenter()
   if left and top and cx and cy then
+    -- 3a. Re-anchor to UIParent CENTER at the resolved spot and persist it.
     queue:ClearAllPoints()
     queue:SetPoint("TOPLEFT", UIParent, "CENTER", left - cx, top - cy)
+    savePosition(queue, o.queueAnchor)
+  else
+    -- 3b. Frame rect not realized yet → GetLeft/GetTop returned nil. Do NOT
+    --     savePosition here: the queue is still anchored relative to the icon,
+    --     and savePosition would store relPoint=BOTTOMLEFT which restorePosition
+    --     (UIParent-based) maps to the screen's bottom-left corner on /reload.
+    --     Fall back to the safe static UIParent-relative default instead.
+    local _, queueDef = ns.DB.DefaultPositions()
+    for k, v in pairs(queueDef) do o.queueAnchor[k] = v end
+    restorePosition(queue, o.queueAnchor)
   end
-
-  -- 3. Persist the resolved UIParent-relative coordinates.
-  savePosition(queue, o.queueAnchor)
   ns.Print("frame positions reset to default.")
 end
 
+-- Move ⇄ Lock toggle: when on, the shown frames become draggable (+ grid + the
+-- X/Y coordinate panel). refreshFrames also shows a sample so there's something
+-- to grab even if Test preview is off.
 function Reminders.ToggleMover()
   ensureFrames()
   moverOn = not moverOn
-  local o = ns.DB.Options()
-  if moverOn then
-    o.hud.locked = false
-    o.queueAnchor.locked = false
-    setGrid(o.showGrid)
-    if showPosPanel then showPosPanel(true) end
-    hud:EnableMouse(true)
-    queue:EnableMouse(true)
-    layoutHud(o) -- preview matches the current style/timePos
-    layoutQueueRows(o) -- ensure queue rows exist + are sized for the sample
-    -- show samples so they can be dragged
-    if hud.icon then hud.icon:SetTexture(136235) end -- generic icon
-    hud.name:SetText("Cooldown name")
-    hud.count:SetText("3")
-    hud.bar:SetValue(0.6)
-    hud.bg:Show(); hud.label:Show(); hud:Show(); hud._active = true
-    local qr = queue.rows[1]
-    if qr and qr.icon then
-      local mc = o.textColor or { r = 1, g = 0.95, b = 0.4 }
-      qr.icon:SetTexture(136235); qr.icon:Show()
-      qr.name:SetText("Next cooldown"); qr.name:SetTextColor(mc.r, mc.g, mc.b)
-      if qr.barName then qr.barName:SetText("Next cooldown"); qr.barName:SetTextColor(mc.r, mc.g, mc.b) end
-      qr.count:SetText("12"); qr.count:SetTextColor(1, 1, 1)
-      if qr.bar then qr.bar:SetValue(0.6); qr.bar:SetStatusBarColor(mc.r, mc.g, mc.b) end
-      qr:Show()
-    end
-    queue.bg:Show(); queue.label:Show(); queue:Show(); queue._live = true
-    ns.Print("move mode ON — drag the frames or type X/Y in the panel, then /coolplan lock.")
-  else
-    hud._active = false
-    queue._live = false
-    Reminders.SetLocked(true)
+  refreshFrames()
+  if not moverOn then
     ns.Print("move mode OFF — positions saved.")
+  elseif testOn then
+    ns.Print("move mode ON — drag the frames or type X/Y in the panel, then Lock.")
+  else
+    ns.Print('move mode ON — press "Test frames" to show the frames, then drag them.')
   end
+end
+
+-- Test frames toggle: show/hide the sample preview frames (no drag — turn on
+-- Move to reposition them). Independent of Move.
+function Reminders.ToggleTest()
+  ensureFrames()
+  testOn = not testOn
+  refreshFrames()
+  ns.Print(testOn and "test frames shown." or "test frames hidden.")
 end
 
 -- ── coordinate-input panel (ElvUI-style: type exact X/Y for the selected frame) ──
@@ -627,6 +680,7 @@ local function buildPosPanel()
   local f = CreateFrame("Frame", "CoolPlanPosPanel", UIParent)
   f:SetSize(160, 96)
   f:SetFrameStrata("DIALOG")
+  f:SetClampedToScreen(true) -- never let the panel render off the screen edge
   -- Initial anchor is set by showPosPanel → selectPosTarget; this is just a safe fallback.
   f:SetPoint("TOP", UIParent, "CENTER", 0, -40)
   -- NOT movable: it stays anchored to the selected frame and follows it while dragging.
@@ -661,15 +715,15 @@ local function buildPosPanel()
       if n then applyPos(axis, math.floor(n + 0.5)) end
       self:ClearFocus()
     end))
-    eb:SetScript("OnEscapePressed", function(self) self:SetText(tostring(self.cur or 0)); self:ClearFocus() end)
-    eb:SetScript("OnEditFocusLost", function(self) self:SetText(tostring(self.cur or 0)) end)
+    eb:SetScript("OnEscapePressed", ns.wrap(function(self) self:SetText(tostring(self.cur or 0)); self:ClearFocus() end))
+    eb:SetScript("OnEditFocusLost", ns.wrap(function(self) self:SetText(tostring(self.cur or 0)) end))
     return eb
   end
   f.xb = box("X", -44, "x")
   f.yb = box("Y", -68, "y")
 
   -- live-update the boxes while a frame is being dragged
-  f:SetScript("OnUpdate", function() if draggingFrame then refreshPosBoxes() end end)
+  f:SetScript("OnUpdate", ns.wrap(function() if draggingFrame then refreshPosBoxes() end end))
   return f
 end
 
@@ -678,8 +732,17 @@ end
 local function anchorPanelToFrame(frame)
   if not (posPanel and frame) then return end
   posPanel:ClearAllPoints()
-  -- Prefer RIGHT side; panel is 160px wide.  A small gap (8px) keeps it readable.
-  posPanel:SetPoint("LEFT", frame, "RIGHT", 8, 0)
+  -- Put the panel on whichever side keeps it on-screen: to the RIGHT of the
+  -- frame normally, but flip to the LEFT when the frame sits in the right half
+  -- of the screen (so a 160px panel doesn't spill off the right edge).
+  -- SetClampedToScreen is a further backstop for the top/bottom edges.
+  local fx = frame:GetCenter()
+  local cx = (UIParent:GetWidth() or 0) / 2
+  if fx and fx > cx then
+    posPanel:SetPoint("RIGHT", frame, "LEFT", -8, 0)
+  else
+    posPanel:SetPoint("LEFT", frame, "RIGHT", 8, 0)
+  end
 end
 
 selectPosTarget = function(frame)
@@ -692,7 +755,10 @@ end
 showPosPanel = function(show)
   if show then
     if not posPanel then posPanel = buildPosPanel() end
-    if not posTarget then posTarget = hud end
+    -- Always (re)start a move session on the HUD: a posTarget left over from a
+    -- previous session could point at a frame that's now near/off a screen edge,
+    -- which would anchor the panel off-screen ("panel doesn't show").
+    posTarget = hud
     anchorPanelToFrame(posTarget)
     posPanel:Show()
     refreshPosBoxes()
@@ -706,7 +772,9 @@ end
 -- A cue has: kind ("cd" | "boss"), timeMs, spellId, spellName?, alert?, bossType?
 function Reminders.RenderTick(active, upcoming, o)
   ensureFrames()
-  if moverOn then return end
+  -- NOTE: no early-return on moverOn. Move only toggles dragging; it must not
+  -- block live rendering, so a test alert / demo / timeline test still shows the
+  -- HUD (and stays draggable) while Move is on.
 
   if active and o.textEnabled then
     local cue = active.cue
@@ -737,7 +805,9 @@ function Reminders.RenderTick(active, upcoming, o)
     end
     hud._active = true
     hud:Show()
-  else
+  elseif not testOn then
+    -- Between live cues: hide — UNLESS the Test preview is on, in which case keep
+    -- the HUD visible (a running demo/test ticker must not hide the test frame).
     hud._active = false
     hud:Hide()
   end
@@ -776,7 +846,7 @@ function Reminders.RenderTick(active, upcoming, o)
     end
     queue._live = true
     queue:Show()
-  else
+  elseif not testOn then
     queue._live = false
     queue:Hide()
   end
@@ -858,7 +928,13 @@ function Reminders.Clear()
   ensureFrames()
   hud._active = false
   queue._live = false
-  if not moverOn then hud:Hide(); queue:Hide() end
+  -- After a test/demo/encounter: if the Test preview is on, restore it; else
+  -- hide. (Move alone never shows frames, so there's nothing to keep.)
+  if testOn then
+    showSample()
+  else
+    hud:Hide(); queue:Hide()
+  end
 end
 
 -- ── quick test (sound flash) + countdown demo without an encounter ─────────────

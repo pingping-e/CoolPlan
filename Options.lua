@@ -327,8 +327,14 @@ function Options.BuildPage(host)
   -- (boss mechanics are intentionally NOT alerted here — BigWigs/DBM already
   -- call those out; CoolPlan focuses on the team's cooldowns.)
   header(rcol, "Position", RX, -404)
-  button(rcol, "Move frames", 120, RX, -426, function() ns.Reminders.ToggleMover() end)
-  button(rcol, "Lock", 70, RX + 128, -426, function() ns.Reminders.SetLocked(true) end)
+  -- Test = show/hide preview frames; Move = toggle dragging them (label flips to
+  -- Lock). The two are independent (Move drags whatever is shown).
+  local testBtn = button(rcol, "Test frames", 110, RX, -426, function() ns.Reminders.ToggleTest() end)
+  local moveBtn = button(rcol, "Move", 90, RX + 118, -426, function() ns.Reminders.ToggleMover() end)
+  ns.Reminders.SetModeButtonUpdater(function(moving, testing)
+    if moveBtn then moveBtn:SetText(moving and "Lock" or "Move") end
+    if testBtn then testBtn:SetText(testing and "Hide test" or "Test frames") end
+  end)
   button(rcol, "Reset", 90, RX, -452, function() ns.Reminders.ResetPositions() end)
   checkbox(rcol, "Show grid", RX, -480,
     function() return o.showGrid end,
