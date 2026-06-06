@@ -92,7 +92,7 @@ local function ensurePopup()
   popup:EnableMouse(true)
   popup:SetClampedToScreen(true)
   popup.catcher = catcher
-  catcher:SetScript("OnClick", function() popup:Hide() end)
+  catcher:SetScript("OnClick", ns.wrap(function() popup:Hide() end))
 
   if ns.Style and ns.Style.Panel then
     ns.Style.Panel(popup, 0.98)
@@ -110,12 +110,12 @@ local function ensurePopup()
 
   local close = CreateFrame("Button", nil, popup, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", 2, 2)
-  close:SetScript("OnClick", function() popup:Hide() end)
+  close:SetScript("OnClick", ns.wrap(function() popup:Hide() end))
 
   popup.search = CreateFrame("EditBox", nil, popup, "InputBoxTemplate")
   popup.search:SetAutoFocus(false)
   popup.search:SetScript("OnTextChanged", ns.wrap(function() Picker.Refresh() end))
-  popup.search:SetScript("OnEscapePressed", function(self) self:ClearFocus(); popup:Hide() end)
+  popup.search:SetScript("OnEscapePressed", ns.wrap(function(self) self:ClearFocus(); popup:Hide() end))
 
   local sf = CreateFrame("ScrollFrame", "CoolPlanPickerScroll", popup, "UIPanelScrollFrameTemplate")
   sf:EnableMouseWheel(true)
@@ -133,10 +133,10 @@ local function ensurePopup()
   popup.content = content
   popup.rows = {}
 
-  popup:SetScript("OnHide", function()
+  popup:SetScript("OnHide", ns.wrap(function()
     if popup.search then popup.search:SetText("") end
     if popup.catcher then popup.catcher:Hide() end
-  end)
+  end))
   -- Esc closes even when the search box isn't focused.
   if UISpecialFrames then tinsert(UISpecialFrames, "CoolPlanPicker") end
   if ns.Style and ns.Style.Apply then ns.Style.Apply(popup) end

@@ -124,8 +124,8 @@ local function promptRename(id, index, current)
     end
     ok:SetScript("OnClick", ns.wrap(accept))
     box:SetScript("OnEnterPressed", ns.wrap(accept))
-    box:SetScript("OnEscapePressed", function() prompt:Hide() end)
-    cancel:SetScript("OnClick", function() prompt:Hide() end)
+    box:SetScript("OnEscapePressed", ns.wrap(function() prompt:Hide() end))
+    cancel:SetScript("OnClick", ns.wrap(function() prompt:Hide() end))
     if ns.Style then ns.Style.Apply(prompt) end
   end
   prompt.id, prompt.index = id, index
@@ -176,13 +176,13 @@ function Manager.Refresh()
     if active then
       row.use:Hide(); row.active:Show()
       row.active:SetScript("OnClick", ns.wrap(function() ns.DB.SetActive(id, 0); Manager.Refresh() end))
-      row.active:SetScript("OnEnter", function(self)
+      row.active:SetScript("OnEnter", ns.wrap(function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:AddLine("Active plan")
         GameTooltip:AddLine("Click to deactivate — nothing will play on pull.", 0.8, 0.8, 0.8, true)
         GameTooltip:Show()
-      end)
-      row.active:SetScript("OnLeave", function() GameTooltip:Hide() end)
+      end))
+      row.active:SetScript("OnLeave", ns.wrap(function() GameTooltip:Hide() end))
     else
       row.active:Hide(); row.use:Show()
       row.use:SetScript("OnClick", ns.wrap(function() ns.DB.SetActive(id, it.index); Manager.Refresh() end))

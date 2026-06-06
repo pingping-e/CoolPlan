@@ -57,7 +57,7 @@ function Editor.BuildPage(host)
     eb:SetHeight(needed)
   end
 
-  eb:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+  eb:SetScript("OnEscapePressed", ns.wrap(function(self) self:ClearFocus() end))
   eb:SetScript("OnTextChanged", ns.wrap(function()
     fitEditBox()
     sf:UpdateScrollChildRect()
@@ -87,7 +87,7 @@ function Editor.BuildPage(host)
   nameBox:SetSize(150, 20)
   nameBox:SetPoint("LEFT", nameLabel, "RIGHT", 8, 0)
   nameBox:SetAutoFocus(false)
-  nameBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+  nameBox:SetScript("OnEscapePressed", ns.wrap(function(self) self:ClearFocus() end))
   host.nameBox = nameBox
 
   -- buttons (bottom-right)
@@ -157,10 +157,10 @@ function Editor.BuildPage(host)
 
   local clearBtn = makeButton(host, "Clear Box", 90)
   clearBtn:SetPoint("RIGHT", exportBtn, "LEFT", -8, 0)
-  clearBtn:SetScript("OnClick", function()
+  clearBtn:SetScript("OnClick", ns.wrap(function()
     host.editbox:SetText("")
     host.status:SetText("")
-  end)
+  end))
 
   if ns.Style then
     ns.Style.Apply(host)
