@@ -129,11 +129,19 @@ local function hideFrom(pool, n, kind)
 end
 
 -- ── note access ──────────────────────────────────────────────────────────────
+-- The Timeline is a viewer, so when the encounter is disarmed (active == 0 /
+-- none) it still previews plan 1 rather than going blank. The live Scheduler
+-- separately honours active == 0 (no alerts on pull). NB: 0 is truthy in Lua, so
+-- `e.active or 1` won't fall through — guard the index explicitly.
+local function previewIndex(e)
+  return selNote or (e.active and e.active >= 1 and e.active) or 1
+end
+
 local function currentNote()
   if not selEnc then return nil end
   local e = ns.DB.GetEncounter(selEnc)
   if not e then return nil end
-  local p = e.plans[selNote or e.active]
+  local p = e.plans[previewIndex(e)]
   return e, p
 end
 
@@ -397,19 +405,27 @@ local function previewItems()
   return items
 end
 
--- Default the preview filter to the logged-in character if present in the note,
--- else Everyone. Resets when the note changes (keeps it from going stale).
+-- Default the preview filter to "me": (1) the logged-in character if their name
+-- is in the note, else (2) the slot the user last picked (remembered per
+-- character — site roster overrides reuse the same name per spec slot, so this
+-- effectively pins your own row), else (3) Everyone. Refreshed when the note
+-- changes so a remembered name that's absent here falls back gracefully.
 local function refreshPreviewDD()
   if not previewDD then return end
   local _, p = currentNote()
   local me = UnitName and UnitName("player")
-  local found = nil
-  if p and me then
+  local nameMatch, savedMatch = nil, nil
+  local saved = ns.DB.GetTimelinePreviewAs()
+  if p then
     for _, r in ipairs(p.reminders or {}) do
-      if r.player and strlower(r.player) == strlower(me) then found = r.player; break end
+      local pl = r.player
+      if pl and pl ~= "" then
+        if me and strlower(pl) == strlower(me) then nameMatch = pl end
+        if saved and saved ~= "__all__" and strlower(pl) == strlower(saved) then savedMatch = pl end
+      end
     end
   end
-  selPreviewAs = found or "__all__"
+  selPreviewAs = nameMatch or savedMatch or "__all__"
   previewDD:SetValue(selPreviewAs, selPreviewAs == "__all__" and "Everyone" or selPreviewAs)
 end
 
@@ -417,7 +433,7 @@ local function refreshNoteDD()
   local e = selEnc and ns.DB.GetEncounter(selEnc)
   if e and #e.plans > 0 then
     local valid = selNote and e.plans[selNote]
-    if not valid then selNote = e.active or 1 end
+    if not valid then selNote = previewIndex(e) end
     noteDD:SetValue(selNote, e.plans[selNote] and e.plans[selNote].label or "—")
   else
     selNote = nil
@@ -558,7 +574,7 @@ function Timeline.BuildPage(host)
 
   -- "Preview as" — which player's reminders the Test plays (Everyone / a player).
   previewDD = ns.Window.MakeDropdown(host, "CoolPlanTLPreviewDD", 130, previewItems,
-    function(v) selPreviewAs = v end)
+    function(v) selPreviewAs = v; ns.DB.SetTimelinePreviewAs(v) end)
   previewDD:SetPoint("LEFT", noteDD, "RIGHT", 8, 0)
 
   -- Test / Stop button — pin to the host's right edge (row 2) so it follows the
@@ -679,7 +695,14 @@ function Timeline.BuildPage(host)
     if ns.Scheduler.IsPreview() then stopTest() end
   end))
 
-  host._onShow = function() Timeline.Refresh() end
+  -- Re-entering the tab follows the encounter's ACTIVE plan. selNote persists
+  -- across page rebuilds so a manual note pick sticks while you stay on the
+  -- Timeline, but clearing it on show means changing the active plan elsewhere
+  -- (Manager) is reflected here instead of showing a stale last-viewed note.
+  host._onShow = function()
+    selNote = nil
+    Timeline.Refresh()
+  end
 
   if ns.Style then
     ns.Style.Apply(host)

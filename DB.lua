@@ -20,7 +20,7 @@ local defaults = {
   options = {
     filterToMe = true,
     leadSeconds = 5,          -- on-screen anticipation lead (seconds before cast)
-    soundLeadSeconds = 3,     -- sound/TTS lead (seconds before cast) — independent
+    soundLeadSeconds = 0,     -- sound/TTS lead (seconds before cast) — independent
     textEnabled = true,
     alertSound = "sound",     -- single alert mode: "none" | "sound" | "tts"
     ttsVoice = 0,
@@ -28,11 +28,12 @@ local defaults = {
     countdownVoice = false, -- speak a 3-2-1 TTS countdown before each cue (separate from spell-name TTS)
     scale = 1.0,
     fontSize = 28,
-    hudStyle = "iconName",    -- "icon" | "iconName" | "bar"
+    hudStyle = "icon",        -- "icon" | "iconName" | "bar"
     timePos = "icon",         -- "icon" (inside icon/bar) | "right" (separate, on the right)
     textColor = { r = 1, g = 1, b = 1 },
     showQueue = true,
     queueCount = 2,
+    queueWindow = 10,         -- only show queued cues casting within N seconds (10–30)
     categoryEnabled = {},
     hud = { point = "CENTER", relPoint = "CENTER", x = 0, y = 200, locked = true },
     -- queue sits BELOW the HUD, left edges aligned (HUD is 440 wide → left edge
@@ -152,6 +153,25 @@ function DB.Init()
 end
 
 function DB.Options() return CoolPlanDB.options end
+
+-- Reset the Options-page settings to defaults. Frame positions, window size,
+-- minimap and last page are PRESERVED (the HUD has its own "Reset position"),
+-- as is the saved-plan library (per-character, untouched). Caller should
+-- ReloadUI afterwards so the Options widgets rebuild against the fresh values.
+function DB.ResetOptions()
+  local o = CoolPlanDB.options
+  if not o then return end
+  local keep = {
+    hud = o.hud, queueAnchor = o.queueAnchor,
+    windowW = o.windowW, windowH = o.windowH,
+    minimap = o.minimap, lastPage = o.lastPage,
+  }
+  if wipe then wipe(o) else for k in pairs(o) do o[k] = nil end end
+  deepFill(o, defaults.options)             -- deep-copies every default back in
+  o.hud, o.queueAnchor = keep.hud, keep.queueAnchor
+  o.windowW, o.windowH = keep.windowW, keep.windowH
+  o.minimap, o.lastPage = keep.minimap, keep.lastPage
+end
 -- Default frame positions (for the "Reset" button), copied so callers can't
 -- mutate the shared defaults table.
 function DB.DefaultPositions()
@@ -160,6 +180,12 @@ function DB.DefaultPositions()
     { point = d.hud.point, relPoint = d.hud.relPoint, x = d.hud.x, y = d.hud.y },
     { point = d.queueAnchor.point, relPoint = d.queueAnchor.relPoint, x = d.queueAnchor.x, y = d.queueAnchor.y }
 end
+-- Per-character Timeline "Preview as" default: remember the last slot the user
+-- picked so the tab doesn't reset to "Everyone" each visit. Stored per character
+-- (one name), restored when the note contains that player. "__all__" = Everyone.
+function DB.GetTimelinePreviewAs() return CoolPlanCharDB.timelinePreviewAs end
+function DB.SetTimelinePreviewAs(v) CoolPlanCharDB.timelinePreviewAs = v end
+
 function DB.Library() return CoolPlanCharDB.library end
 function DB.GetEncounter(id) return CoolPlanCharDB.library[id] end
 
@@ -203,9 +229,13 @@ function DB.AddPlan(id, encName, label, reminders, boss)
   return #e.plans
 end
 
+-- index 0 (or nil) = NONE active: nothing plays on pull. Otherwise must be a
+-- real plan index. Lets the user fully disarm an encounter, not just swap plans.
 function DB.SetActive(id, index)
   local e = CoolPlanCharDB.library[id]
-  if e and e.plans[index] then e.active = index end
+  if not e then return end
+  if not index or index == 0 then e.active = 0
+  elseif e.plans[index] then e.active = index end
 end
 
 function DB.RenamePlan(id, index, label)
@@ -223,8 +253,9 @@ function DB.DeletePlan(id, index)
   local e = CoolPlanCharDB.library[id]
   if not e or not e.plans[index] then return end
   table.remove(e.plans, index) -- the plan's boss timeline goes with it (one body)
+  -- clamp a dangling active index, but DON'T force-arm plan 1 when active is 0
+  -- (none) — the user may have intentionally disarmed the encounter.
   if e.active > #e.plans then e.active = #e.plans end
-  if e.active < 1 and #e.plans > 0 then e.active = 1 end
   pruneIfEmpty(id, e)
 end
 

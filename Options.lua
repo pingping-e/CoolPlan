@@ -6,6 +6,17 @@ local _, ns = ...
 local Options = {}
 ns.Options = Options
 
+-- Confirm dialog for "Reset settings". Reset + ReloadUI so the page rebuilds
+-- against the fresh defaults (the widgets only read their values on build).
+StaticPopupDialogs = StaticPopupDialogs or {}
+StaticPopupDialogs["COOLPLAN_RESET_SETTINGS"] = {
+  text = "Reset all CoolPlan settings to defaults?\nYour UI will reload. Saved plans and frame positions are kept.",
+  button1 = OKAY or "Okay",
+  button2 = CANCEL or "Cancel",
+  OnAccept = function() ns.DB.ResetOptions(); ReloadUI() end,
+  timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
 local CATEGORIES = {
   { "personal_defensive", "Personal def" },
   { "external_defensive", "External def" },
@@ -245,12 +256,47 @@ function Options.BuildPage(host)
   header(timingCol, "Timing", 4, 0)
   slider(timingCol, "On-screen lead (s)", 4, -24, 0, 10, 1,
     function() return o.leadSeconds or 4 end, function(v) o.leadSeconds = v end)
-  slider(timingCol, "Sound/TTS lead (s)", 4, -78, 0, 10, 1,
+  local soundLeadSlider = slider(timingCol, "Sound/TTS lead (s)", 4, -78, 0, 10, 1,
     function() return o.soundLeadSeconds or 0 end, function(v) o.soundLeadSeconds = v end)
+
+  -- The spoken 3-2-1 countdown IS the audio lead-in, so a separate Sound/TTS
+  -- lead would fire the cue (ping / spell-name TTS) on top of the "3..2..1"
+  -- numbers — overlapping and awkward. While the countdown is on, force the
+  -- Sound/TTS lead to 0 (cue fires AT cast, after the count) and lock the slider;
+  -- restore the prior value when unchecked.
+  local savedSoundLead = o.soundLeadSeconds or 0
+  local countdownLocked = false
+  -- Grey the (otherwise brand-blue) thumb while locked so it visibly reads as
+  -- non-editable. We paint the thumb a flat colour ourselves, so the native
+  -- Disable() can't desaturate it — recolour it directly instead.
+  local function tintSoundLead(locked)
+    local thumb = soundLeadSlider.GetThumbTexture and soundLeadSlider:GetThumbTexture()
+    if not (thumb and thumb.SetColorTexture) then return end
+    if locked then
+      thumb:SetColorTexture(0.42, 0.44, 0.48, 1)                 -- greyed
+    else
+      local a = (ns.Style and ns.Style.colors and ns.Style.colors.accent) or { 0.23, 0.51, 0.96 }
+      thumb:SetColorTexture(a[1], a[2], a[3], 1)                 -- brand blue
+    end
+  end
+  local function applyCountdownLock(on)
+    if on and not countdownLocked then savedSoundLead = o.soundLeadSeconds or 0 end
+    countdownLocked = on
+    if on then
+      soundLeadSlider:SetValue(0)
+      if soundLeadSlider.Disable then soundLeadSlider:Disable() end
+    else
+      if soundLeadSlider.Enable then soundLeadSlider:Enable() end
+      soundLeadSlider:SetValue(savedSoundLead)
+    end
+    tintSoundLead(on)
+  end
+
   -- Spoken 3-2-1 countdown (TTS). Independent of the alert sound mode — works
   -- even on Sound/None, and is separate from the spell-name TTS.
   checkbox(timingCol, "Speak 3-2-1 countdown (TTS)", 4, -126,
-    function() return o.countdownVoice end, function(v) o.countdownVoice = v end)
+    function() return o.countdownVoice end,
+    function(v) o.countdownVoice = v; applyCountdownLock(v) end)
 
   -- ── right column: HUD ── (parented to rcol → tracks the window's right edge)
   header(rcol, "HUD", RX, -8)
@@ -322,21 +368,24 @@ function Options.BuildPage(host)
     function() return o.showQueue end, function(v) o.showQueue = v end)
   slider(rcol, "Queue size", RX, -350, 1, 6, 1,
     function() return o.queueCount or 3 end, function(v) o.queueCount = v end)
+  -- only list queued cues casting within this many seconds (10–30).
+  slider(rcol, "Queue window (s)", RX, -404, 10, 30, 1,
+    function() return o.queueWindow or 10 end, function(v) o.queueWindow = v end)
 
   -- ── right column: position ──
   -- (boss mechanics are intentionally NOT alerted here — BigWigs/DBM already
   -- call those out; CoolPlan focuses on the team's cooldowns.)
-  header(rcol, "Position", RX, -404)
+  header(rcol, "Position", RX, -458)
   -- Test = show/hide preview frames; Move = toggle dragging them (label flips to
   -- Lock). The two are independent (Move drags whatever is shown).
-  local testBtn = button(rcol, "Test frames", 110, RX, -426, function() ns.Reminders.ToggleTest() end)
-  local moveBtn = button(rcol, "Move", 90, RX + 118, -426, function() ns.Reminders.ToggleMover() end)
+  local testBtn = button(rcol, "Test frames", 110, RX, -480, function() ns.Reminders.ToggleTest() end)
+  local moveBtn = button(rcol, "Move", 90, RX + 118, -480, function() ns.Reminders.ToggleMover() end)
   ns.Reminders.SetModeButtonUpdater(function(moving, testing)
     if moveBtn then moveBtn:SetText(moving and "Lock" or "Move") end
     if testBtn then testBtn:SetText(testing and "Hide test" or "Test frames") end
   end)
-  button(rcol, "Reset", 90, RX, -452, function() ns.Reminders.ResetPositions() end)
-  checkbox(rcol, "Show grid", RX, -480,
+  button(rcol, "Reset position", 120, RX, -506, function() ns.Reminders.ResetPositions() end)
+  checkbox(rcol, "Show grid", RX, -534,
     function() return o.showGrid end,
     function(v) o.showGrid = v end)
 
@@ -380,6 +429,9 @@ function Options.BuildPage(host)
   demoB:ClearAllPoints(); demoB:SetPoint("LEFT", testB, "RIGHT", 8, 0)
   local stopB = button(host, "Stop", 70, 0, 0, function() ns.Scheduler.Stop() end)
   stopB:ClearAllPoints(); stopB:SetPoint("LEFT", demoB, "RIGHT", 8, 0)
+  local resetAllB = button(host, "Reset settings", 130, 0, 0,
+    function() StaticPopup_Show("COOLPLAN_RESET_SETTINGS") end)
+  resetAllB:ClearAllPoints(); resetAllB:SetPoint("LEFT", stopB, "RIGHT", 8, 0)
 
   if ns.Style then
     ns.Style.Apply(host)
@@ -388,6 +440,10 @@ function Options.BuildPage(host)
     ns.Style.Dropdown(styleDD)
     ns.Style.Dropdown(timePosDD)
   end
+
+  -- after styling (which paints the thumb brand-blue): reflect the saved lock
+  -- state so a countdown-on session opens with the lead slider greyed/locked.
+  applyCountdownLock(o.countdownVoice and true or false)
 
   syncAlertRows()
 end

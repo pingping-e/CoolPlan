@@ -108,12 +108,14 @@ end
 local function build()
   local o = ns.DB and ns.DB.Options and ns.DB.Options()
   local f = CreateFrame("Frame", "CoolPlanWindow", UIParent, "BackdropTemplate")
-  -- Size bounds: min so the content-heavy Options page can lay out; max so it
-  -- can never grow past the screen and put the resize grip out of reach.
-  local maxW = math.min(1600, math.max(900, (UIParent:GetWidth() or 1280) - 40))
+  -- Size bounds: min so the content-heavy Options page can lay out (the bottom
+  -- action row must clear the right-hand column, hence 940); max so it can never
+  -- grow past the screen and put the resize grip out of reach.
+  local MIN_W = 940
+  local maxW = math.min(1600, math.max(MIN_W, (UIParent:GetWidth() or 1280) - 40))
   local maxH = math.min(1000, math.max(640, (UIParent:GetHeight() or 800) - 40))
   local function clampSize(v, lo, hi) return math.min(math.max(v or lo, lo), hi) end
-  f:SetSize(clampSize((o and o.windowW) or 900, 900, maxW), clampSize((o and o.windowH) or 640, 620, maxH))
+  f:SetSize(clampSize((o and o.windowW) or MIN_W, MIN_W, maxW), clampSize((o and o.windowH) or 640, 620, maxH))
   f:SetPoint("CENTER")
   f:SetFrameStrata("DIALOG")
   f:SetMovable(true)
@@ -127,9 +129,9 @@ local function build()
   -- so they reflow automatically. Size is saved across sessions.
   f:SetResizable(true)
   if f.SetResizeBounds then
-    f:SetResizeBounds(900, 620, maxW, maxH)
+    f:SetResizeBounds(MIN_W, 620, maxW, maxH)
   elseif f.SetMinResize then
-    f:SetMinResize(900, 620)
+    f:SetMinResize(MIN_W, 620)
     if f.SetMaxResize then f:SetMaxResize(maxW, maxH) end
   end
   local grip = CreateFrame("Button", nil, f)
@@ -169,9 +171,17 @@ local function build()
   end
 
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  title:SetPoint("TOP", 0, -14)
+  -- nudge the title right so the brand icon + wordmark read as a centered pair.
+  title:SetPoint("TOP", 12, -14)
   title:SetText("|cff66b3ffCoolPlan|r")
   f.title = title
+
+  -- brand icon to the LEFT of the wordmark (reuses the minimap/logo asset)
+  local titleIcon = f:CreateTexture(nil, "OVERLAY")
+  titleIcon:SetSize(20, 20)
+  titleIcon:SetPoint("RIGHT", title, "LEFT", -5, 0)
+  titleIcon:SetTexture("Interface\\AddOns\\CoolPlan\\media\\logo.tga")
+  f.titleIcon = titleIcon
 
   local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", -4, -4)

@@ -29,29 +29,71 @@ local function tinyBtn(parent, text, w)
   return b
 end
 
+-- The green "Active" chip — deliberately a different shape/colour from the gray
+-- action buttons so the active plan reads as a STATUS, not as one more setting.
+-- It's also a toggle: clicking the active chip disarms the encounter (none
+-- active → nothing plays on pull). (Previously the "Use" button just relabelled
+-- itself to "Active", which conflated the toggle with its state.)
+local function makeBadge(parent, w)
+  local f = CreateFrame("Button", nil, parent)
+  f:SetSize(w, 18)
+  local bg = f:CreateTexture(nil, "BACKGROUND")
+  bg:SetAllPoints()
+  bg:SetColorTexture(0.16, 0.40, 0.20, 0.85)        -- green tint
+  local function edge(p1, p2)
+    local t = f:CreateTexture(nil, "BORDER")
+    t:SetColorTexture(0.35, 0.78, 0.42, 1)           -- green 1px border
+    t:SetPoint(p1); t:SetPoint(p2)
+    return t
+  end
+  edge("TOPLEFT", "TOPRIGHT"):SetHeight(1)
+  edge("BOTTOMLEFT", "BOTTOMRIGHT"):SetHeight(1)
+  edge("TOPLEFT", "BOTTOMLEFT"):SetWidth(1)
+  edge("TOPRIGHT", "BOTTOMRIGHT"):SetWidth(1)
+  local hl = f:CreateTexture(nil, "HIGHLIGHT")        -- hover hint: it's clickable
+  hl:SetAllPoints()
+  hl:SetColorTexture(1, 1, 1, 0.12)
+  local fs = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  fs:SetPoint("CENTER")
+  fs:SetText("\226\151\143 Active")                  -- "● Active"
+  fs:SetTextColor(0.66, 1.0, 0.66)                   -- bright green text
+  f.text = fs
+  return f
+end
+
 local function getRow(i)
   if rows[i] then return rows[i] end
   local row = CreateFrame("Frame", nil, content)
   row:SetSize(CONTENT_W, 22)
 
-  -- left label gets the space the action buttons don't use (button cluster ≈
-  -- 5 buttons + roomy 7px gaps); keep it from crowding the first button.
+  -- LEFT cluster: the active/use control sits next to the plan name, apart from
+  -- the right-side settings buttons. "Use Plan" and the green "Active" chip share
+  -- one slot (mutually exclusive): non-active rows show the button, the active
+  -- row shows the chip.
+  row.use = tinyBtn(row, "Use Plan", 72)
+  row.use:SetPoint("LEFT", 4, 0)
+  row.active = makeBadge(row, 72)
+  row.active:SetPoint("LEFT", 4, 0)
+  row.active:Hide()
+
+  -- plan label, anchored after the control (anchor holds even while `use` is
+  -- hidden, so the chip and button align to the same x).
   row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  row.text:SetPoint("LEFT", 4, 0)
+  row.text:SetPoint("LEFT", row.use, "RIGHT", 10, 0)
   row.text:SetJustifyH("LEFT")
-  row.text:SetWidth(170)
+  row.text:SetWidth(150)
 
   -- 7px gaps so the actions read as separate buttons instead of one strip.
+  -- Widths give each label comfortable padding (Rename is the widest word).
   local GAP = 7
-  row.exp = tinyBtn(row, "Export", 54); row.exp:SetPoint("RIGHT", -4, 0)
-  row.del = tinyBtn(row, "Delete", 54); row.del:SetPoint("RIGHT", row.exp, "LEFT", -GAP, 0)
-  row.shr = tinyBtn(row, "Share", 50);  row.shr:SetPoint("RIGHT", row.del, "LEFT", -GAP, 0)
-  row.ren = tinyBtn(row, "Rename", 56); row.ren:SetPoint("RIGHT", row.shr, "LEFT", -GAP, 0)
-  row.use = tinyBtn(row, "Use", 48);    row.use:SetPoint("RIGHT", row.ren, "LEFT", -GAP, 0)
+  row.exp = tinyBtn(row, "Export", 62); row.exp:SetPoint("RIGHT", -4, 0)
+  row.del = tinyBtn(row, "Delete", 60); row.del:SetPoint("RIGHT", row.exp, "LEFT", -GAP, 0)
+  row.shr = tinyBtn(row, "Share", 56);  row.shr:SetPoint("RIGHT", row.del, "LEFT", -GAP, 0)
+  row.ren = tinyBtn(row, "Rename", 72); row.ren:SetPoint("RIGHT", row.shr, "LEFT", -GAP, 0)
 
   if ns.Style then
-    ns.Style.Button(row.exp); ns.Style.Button(row.del); ns.Style.Button(row.shr)
-    ns.Style.Button(row.ren); ns.Style.Button(row.use)
+    ns.Style.Button(row.exp); ns.Style.Button(row.del)
+    ns.Style.Button(row.shr); ns.Style.Button(row.ren); ns.Style.Button(row.use)
   end
 
   rows[i] = row
@@ -137,11 +179,21 @@ function Manager.Refresh()
     local e, id = it.e, it.id
 
     local active = (e.active == it.index)
-    row.text:SetText(("%s|cff88ccff%s|r |cff888888(%d cd)|r"):format(
-      active and "|cff66ff66> |r" or "", it.p.label, #it.p.reminders))
-    row.use:Show()
-    row.use:SetText(active and "Active" or "Use")
-    row.use:SetScript("OnClick", ns.wrap(function() ns.DB.SetActive(id, it.index); Manager.Refresh() end))
+    row.text:SetText(("|cff88ccff%s|r |cff888888(%d cd)|r"):format(it.p.label, #it.p.reminders))
+    if active then
+      row.use:Hide(); row.active:Show()
+      row.active:SetScript("OnClick", ns.wrap(function() ns.DB.SetActive(id, 0); Manager.Refresh() end))
+      row.active:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine("Active plan")
+        GameTooltip:AddLine("Click to deactivate — nothing will play on pull.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+      end)
+      row.active:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    else
+      row.active:Hide(); row.use:Show()
+      row.use:SetScript("OnClick", ns.wrap(function() ns.DB.SetActive(id, it.index); Manager.Refresh() end))
+    end
     row.ren:Show()
     row.ren:SetScript("OnClick", ns.wrap(function() promptRename(id, it.index, it.p.label) end))
     row.shr:Show()
@@ -224,7 +276,7 @@ function Manager.BuildPage(host)
 
   local hint = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   hint:SetPoint("TOPLEFT", 8, -6)
-  hint:SetText("Pick a dungeon / boss to browse its saved notes. Use = make active (plays on pull).")
+  hint:SetText("Pick a dungeon / boss to browse its saved notes. Use Plan = make active (plays on pull); click the green Active chip to deactivate (nothing plays).")
 
   -- category dropdown
   catDD = ns.Window.MakeDropdown(host, "CoolPlanMgrCatDD", 110,

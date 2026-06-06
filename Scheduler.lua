@@ -7,6 +7,10 @@ local Scheduler = {}
 ns.Scheduler = Scheduler
 
 local LINGER = 1.0
+-- 3-2-1 countdown window. A cue whose cast lands within this many seconds of the
+-- PREVIOUS cast gets no spoken countdown (the lead spell's countdown already
+-- covers the window — a back-to-back cue would only stutter a clipped "2..1").
+local COUNTDOWN_LEAD = 3
 
 local driver, pullTime, queue, activeId
 -- preview mode: a virtual clock advanced by `speed`x each real tick, with an
@@ -54,16 +58,6 @@ local function tick(dt)
       ns.Reminders.Cue(item.cue, o)
     end
 
-    -- spoken 3-2-1 countdown (TTS) over the final 3s before the cast — once per
-    -- whole second, independent of the alert mode and the spell-name TTS.
-    if o.countdownVoice and remaining > 0 then
-      local sec = math.ceil(remaining)
-      if sec <= 3 and sec ~= item.cdLast then
-        item.cdLast = sec
-        ns.Reminders.SpeakCountdown(sec, o)
-      end
-    end
-
     if elapsed >= item.showAt and elapsed <= item.castAt + LINGER then
       -- in the anticipation window: nearest cast becomes the big alert,
       -- any others fall into the queue
@@ -78,6 +72,34 @@ local function tick(dt)
     end
   end
 
+  -- spoken 3-2-1 countdown (TTS) over the final 3s before a cast — once per
+  -- whole second. Fired for ONLY the single soonest upcoming cast so overlapping
+  -- cues (a queued "next" spell landing inside the active spell's countdown
+  -- window) never stack two simultaneous countdowns. Independent of the alert
+  -- mode and the spell-name TTS.
+  if o.countdownVoice then
+    local soonest, soonestItem
+    for _, item in ipairs(queue) do
+      local remaining = item.castAt - elapsed
+      if remaining > 0 and ((not soonest) or remaining < soonest) then
+        soonest, soonestItem = remaining, item
+      end
+    end
+    if soonestItem and not soonestItem.silentCountdown then
+      local sec = math.ceil(soonest)
+      if sec <= 3 and sec ~= soonestItem.cdLast then
+        soonestItem.cdLast = sec
+        ns.Reminders.SpeakCountdown(sec, o)
+      end
+    end
+  end
+
+  -- only preview cues casting within the lookahead window (default 10s), so the
+  -- queue doesn't list things still half a minute out.
+  local window = o.queueWindow or 10
+  for i = #upcoming, 1, -1 do
+    if upcoming[i].remaining > window then table.remove(upcoming, i) end
+  end
   table.sort(upcoming, function(a, b) return a.remaining < b.remaining end)
   local cap = o.queueCount or 3
   while #upcoming > cap do table.remove(upcoming) end
@@ -122,6 +144,18 @@ local function run(cues, opts)
   if #queue == 0 then return false end
   table.sort(queue, function(a, b) return a.castAt < b.castAt end)
 
+  -- Flag cues that follow the previous cast within the countdown window so they
+  -- skip their spoken countdown (avoids a clipped countdown stuttering right
+  -- after the lead spell's). Measured against the immediate previous cast even
+  -- if that one was itself silenced, so a whole burst stays quiet after its lead.
+  local prevCast
+  for _, item in ipairs(queue) do
+    if prevCast and (item.castAt - prevCast) < COUNTDOWN_LEAD then
+      item.silentCountdown = true
+    end
+    prevCast = item.castAt
+  end
+
   if opts and opts.preview then
     preview = true
     previewClock = 0
@@ -144,6 +178,52 @@ end
 -- filterToMe is on, like every other non-raid-wide category.
 local ALWAYS_SHOWN = { raid_defensive = true, bloodlust = true }
 
+-- Categories that don't identify a class/spec (everyone could share or item-grant
+-- them), so they're ignored when guessing which slot is "me" by known spells.
+local NONSPEC_CATEGORY = { trinket = true, potion = true, racial = true }
+
+-- Resolve which plan slot is the LOCAL character, for the live "only me" filter.
+--   1) exact character-name match — how plans authored with your own toon name
+--      already work (unchanged path).
+--   2) fallback when no name matches (site exports carry log/team names, not your
+--      toon name): the slot whose cooldowns your CURRENT spec/talents actually
+--      know, via IsPlayerSpell. Returns the SINGLE confident winner (strictly the
+--      most known class/spec CDs, ≥1) or nil → no guess (caller then shows only
+--      raid-wide cues, i.e. today's behavior). A same-spec slot outscores a
+--      same-class-other-spec one (it knows more of the row's spells), so when your
+--      spec is present it wins; ties / no match resolve to nil rather than guess.
+local function resolveOwner(reminders)
+  local me = UnitName and UnitName("player")
+  if me then
+    for _, r in ipairs(reminders or {}) do
+      if r.player and r.player ~= "" and strlower(r.player) == strlower(me) then
+        return r.player
+      end
+    end
+  end
+  local known = IsPlayerSpell or IsSpellKnown
+  if not known then return nil end
+  local score, seen = {}, {}
+  for _, r in ipairs(reminders or {}) do
+    local pl, sid, cat = r.player, r.spellId, r.category or ""
+    if pl and pl ~= "" and sid and not ALWAYS_SHOWN[cat] and not NONSPEC_CATEGORY[cat] then
+      local key = pl .. "|" .. tostring(sid)
+      if not seen[key] then            -- count each distinct (player, spell) once
+        seen[key] = true
+        local ok, res = pcall(known, sid)
+        if ok and res then score[pl] = (score[pl] or 0) + 1 end
+      end
+    end
+  end
+  local best, bestN, tie = nil, 0, false
+  for pl, n in pairs(score) do
+    if n > bestN then best, bestN, tie = pl, n, false
+    elseif n == bestN then tie = true end
+  end
+  if best and bestN >= 1 and not tie then return best end
+  return nil
+end
+
 -- Build the cue list of cooldowns (kind="cd"): raid_defensive + bloodlust shown
 -- to all; others "only me" + enabled categories. Boss mechanics are NOT cued
 -- here — boss timelines are display-only (the Timeline view's red boss track),
@@ -156,12 +236,21 @@ local ALWAYS_SHOWN = { raid_defensive = true, bloodlust = true }
 -- `_boss` is accepted (call-site symmetry) but unused: boss cues are not fired.
 local function buildCues(reminders, _boss, previewAll, forPlayer)
   local o = ns.DB.Options()
+  -- Live "only me": resolve my plan slot up front (exact name → else spec guess).
+  -- nil → no confident slot, so only raid-wide cues show (today's behavior).
+  local liveFilter = (not previewAll) and (not forPlayer) and o.filterToMe
+  local resolvedMe = liveFilter and resolveOwner(reminders) or nil
+
   local cues = {}
   for _, r in ipairs(reminders or {}) do
     local common = ALWAYS_SHOWN[r.category or ""]
     local meOk
     if forPlayer then
       meOk = common or (strlower(r.player or "") == strlower(forPlayer))
+    elseif liveFilter then
+      local pl = r.player
+      meOk = common or (not pl) or pl == ""
+        or (resolvedMe ~= nil and strlower(pl) == strlower(resolvedMe))
     else
       meOk = previewAll or common or (not o.filterToMe) or nameMatchesMe(r.player)
     end
