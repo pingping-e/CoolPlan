@@ -103,10 +103,11 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
     local n = 0
     for id, e in pairs(ns.DB.Library()) do
       n = n + 1
-      out(("  [%d] %s — %d plan(s)"):format(id, e.name or "?", #e.plans))
-      for i, p in ipairs(e.plans) do
+      local plans = e.plans or {}
+      out(("  [%s] %s — %d plan(s)"):format(tostring(id), e.name or "?", #plans))
+      for i, p in ipairs(plans) do
         out(("       %s %s (%d cd%s)"):format(
-          i == e.active and "|cff66ff66>|r" or " ", p.label, #p.reminders,
+          i == e.active and "|cff66ff66>|r" or " ", p.label or "?", #(p.reminders or {}),
           (p.boss and #p.boss > 0) and (", boss x" .. #p.boss) or ""))
       end
     end

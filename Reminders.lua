@@ -227,11 +227,14 @@ end
 -- region never resurfaces on the next tick.
 local ICON_SIZE = 52
 local THIN_BAR_H = 5
+-- A saved textColor may be malformed (stale/externally-edited SavedVariables);
+-- SetTextColor(nil,…) would throw every frame, so validate before use.
+local function validColor(tc) return type(tc) == "table" and type(tc.r) == "number" end
 local function layoutHud(o)
   local style = o.hudStyle or "iconName"
   local tpos = o.timePos or "icon"
   local size = o.fontSize or 28
-  local c = o.textColor or { r = 1, g = 0.95, b = 0.4 }
+  local c = validColor(o.textColor) and o.textColor or { r = 1, g = 0.95, b = 0.4 }
   local fontPath = GameFontNormalHuge:GetFont() -- nil-guarded below
 
   local icon, name, count, bar = hud.icon, hud.name, hud.count, hud.bar
@@ -782,7 +785,7 @@ function Reminders.RenderTick(active, upcoming, o)
     local _, icon = spellInfo(cue.spellId)
     -- icon texture only; layoutHud already decided icon Show/Hide for the style
     if icon then hud.icon:SetTexture(icon) end
-    local c = isBoss and { r = 1, g = 0.45, b = 0.3 } or (o.textColor or { r = 1, g = 0.95, b = 0.4 })
+    local c = isBoss and { r = 1, g = 0.45, b = 0.3 } or (validColor(o.textColor) and o.textColor or { r = 1, g = 0.95, b = 0.4 })
     -- update name TEXT/color only; layoutHud owns whether name (or barName, the
     -- in-bar variant for the "bar" style) is shown for the style
     local nameText = (isBoss and "|cffff7777[BOSS]|r " or "") .. labelFor(cue)
@@ -959,7 +962,7 @@ function Reminders.Test()
     end
   end
   Reminders.RenderTick({ cue = cue, remaining = 0, total = o.leadSeconds }, nil, o)
-  C_Timer.After(1.5, function() Reminders.Clear() end)
+  C_Timer.After(1.5, ns.wrap(function() Reminders.Clear() end))
 end
 
 function Reminders.StopTest()

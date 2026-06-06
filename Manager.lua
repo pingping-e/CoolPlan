@@ -338,7 +338,7 @@ function Manager.BuildPage(host)
   importBtn:SetSize(120, 22)
   importBtn:SetText("Import / Export")
   importBtn:SetPoint("BOTTOMLEFT", 8, 12)
-  importBtn:SetScript("OnClick", function() ns.Window.Open("import") end)
+  importBtn:SetScript("OnClick", ns.wrap(function() ns.Window.Open("import") end))
 
   local shareBtn = CreateFrame("Button", nil, host, "UIPanelButtonTemplate")
   shareBtn:SetSize(130, 22)

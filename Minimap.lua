@@ -46,6 +46,7 @@ function Minimap_.Toggle()
     return
   end
   local o = ns.DB.Options()
+  o.minimap = o.minimap or {}
   o.minimap.hide = not o.minimap.hide
   if o.minimap.hide then LDBIcon:Hide("CoolPlan") else LDBIcon:Show("CoolPlan") end
   ns.Print("minimap button " .. (o.minimap.hide and "hidden" or "shown") .. ".")
