@@ -42,7 +42,7 @@ local defaults = {
     showGrid = true,          -- show an alignment grid while in move mode
     lastPage = "timeline",
     minimap = { angle = 210, hide = false },
-    windowW = 860, windowH = 640,
+    windowW = 940, windowH = 640,  -- windowW matches Window.lua MIN_W
   },
 }
 
@@ -229,13 +229,15 @@ function DB.AddPlan(id, encName, label, reminders, boss)
   return #e.plans
 end
 
--- index 0 (or nil) = NONE active: nothing plays on pull. Otherwise must be a
--- real plan index. Lets the user fully disarm an encounter, not just swap plans.
+-- index 0 = explicit NONE active: nothing plays on pull (full disarm). A real
+-- plan index activates it. A nil / out-of-range index is a NO-OP (keeps the
+-- current active) — so a stray bad call can't silently disarm an encounter; only
+-- an explicit 0 does.
 function DB.SetActive(id, index)
   local e = CoolPlanCharDB.library[id]
   if not e then return end
-  if not index or index == 0 then e.active = 0
-  elseif e.plans[index] then e.active = index end
+  if index == 0 then e.active = 0
+  elseif index and e.plans[index] then e.active = index end
 end
 
 function DB.RenamePlan(id, index, label)
@@ -267,8 +269,12 @@ function DB.ToSerializable(onlyId, onlyIndex)
   for id, e in pairs(CoolPlanCharDB.library) do
     if (not onlyId) or id == onlyId then
       local idx = onlyIndex or e.active
-      local p = e.plans[idx]
-      out[id] = { name = e.name, reminders = (p and p.reminders) or {}, boss = (p and p.boss) or nil }
+      local p = idx and e.plans[idx]   -- nil when disarmed (active == 0) / invalid
+      -- skip disarmed encounters entirely instead of emitting an empty plan, so
+      -- whole-library export/share doesn't ship (and count) blank entries.
+      if p then
+        out[id] = { name = e.name, reminders = p.reminders or {}, boss = p.boss }
+      end
     end
   end
   return out

@@ -40,16 +40,9 @@ local function makeBadge(parent, w)
   local bg = f:CreateTexture(nil, "BACKGROUND")
   bg:SetAllPoints()
   bg:SetColorTexture(0.16, 0.40, 0.20, 0.85)        -- green tint
-  local function edge(p1, p2)
-    local t = f:CreateTexture(nil, "BORDER")
-    t:SetColorTexture(0.35, 0.78, 0.42, 1)           -- green 1px border
-    t:SetPoint(p1); t:SetPoint(p2)
-    return t
+  if ns.Style and ns.Style.Border then
+    ns.Style.Border(f, { 0.35, 0.78, 0.42, 1 })     -- green 1px border (shared helper)
   end
-  edge("TOPLEFT", "TOPRIGHT"):SetHeight(1)
-  edge("BOTTOMLEFT", "BOTTOMRIGHT"):SetHeight(1)
-  edge("TOPLEFT", "BOTTOMLEFT"):SetWidth(1)
-  edge("TOPRIGHT", "BOTTOMRIGHT"):SetWidth(1)
   local hl = f:CreateTexture(nil, "HIGHLIGHT")        -- hover hint: it's clickable
   hl:SetAllPoints()
   hl:SetColorTexture(1, 1, 1, 0.12)

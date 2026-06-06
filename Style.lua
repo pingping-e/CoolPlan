@@ -83,6 +83,25 @@ end
 -- ── button ───────────────────────────────────────────────────────────────────
 -- Kill the gold UIPanelButtonTemplate art, draw a flat panelLight rect with a
 -- 1px border, brand-accent on hover, dim when disabled. Idempotent.
+-- Draw a flat 1px border (four thin edge textures, no backdrop template needed)
+-- on a frame in the given colour. Shared by the skinned widgets and one-off
+-- chips so border drawing lives in one place. color = {r,g,b[,a]} (default C.border).
+function Style.Border(frame, color)
+  if not (frame and frame.CreateTexture) then return end
+  local c = color or C.border
+  local a = c[4] or 1
+  local function edge(p1, p2)
+    local t = frame:CreateTexture(nil, "BORDER")
+    t:SetColorTexture(c[1], c[2], c[3], a)
+    t:SetPoint(p1); t:SetPoint(p2)
+    return t
+  end
+  edge("TOPLEFT", "TOPRIGHT"):SetHeight(1)
+  edge("BOTTOMLEFT", "BOTTOMRIGHT"):SetHeight(1)
+  edge("TOPLEFT", "BOTTOMLEFT"):SetWidth(1)
+  edge("TOPRIGHT", "BOTTOMRIGHT"):SetWidth(1)
+end
+
 function Style.Button(btn)
   if not btn or btn._cpSkinned then return end
   if has(btn, "GetObjectType") and btn:GetObjectType() ~= "Button" then return end

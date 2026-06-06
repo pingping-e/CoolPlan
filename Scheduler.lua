@@ -47,6 +47,7 @@ local function tick(dt)
 
   local active = nil       -- {reminder, remaining, total}
   local upcoming = {}
+  local soonest, soonestItem = nil, nil  -- nearest still-upcoming cast (for the countdown)
 
   for _, item in ipairs(queue) do
     local remaining = item.castAt - elapsed
@@ -56,6 +57,12 @@ local function tick(dt)
     if (not item.soundCued) and elapsed >= item.soundAt then
       item.soundCued = true
       ns.Reminders.Cue(item.cue, o)
+    end
+
+    -- track the single nearest upcoming cast in this same pass (the countdown
+    -- below speaks only that one, so it doesn't need its own queue scan).
+    if remaining > 0 and ((not soonest) or remaining < soonest) then
+      soonest, soonestItem = remaining, item
     end
 
     if elapsed >= item.showAt and elapsed <= item.castAt + LINGER then
@@ -77,20 +84,11 @@ local function tick(dt)
   -- cues (a queued "next" spell landing inside the active spell's countdown
   -- window) never stack two simultaneous countdowns. Independent of the alert
   -- mode and the spell-name TTS.
-  if o.countdownVoice then
-    local soonest, soonestItem
-    for _, item in ipairs(queue) do
-      local remaining = item.castAt - elapsed
-      if remaining > 0 and ((not soonest) or remaining < soonest) then
-        soonest, soonestItem = remaining, item
-      end
-    end
-    if soonestItem and not soonestItem.silentCountdown then
-      local sec = math.ceil(soonest)
-      if sec <= 3 and sec ~= soonestItem.cdLast then
-        soonestItem.cdLast = sec
-        ns.Reminders.SpeakCountdown(sec, o)
-      end
+  if o.countdownVoice and soonestItem and not soonestItem.silentCountdown then
+    local sec = math.ceil(soonest)
+    if sec <= 3 and sec ~= soonestItem.cdLast then
+      soonestItem.cdLast = sec
+      ns.Reminders.SpeakCountdown(sec, o)
     end
   end
 

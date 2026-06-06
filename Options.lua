@@ -263,9 +263,10 @@ function Options.BuildPage(host)
   -- lead would fire the cue (ping / spell-name TTS) on top of the "3..2..1"
   -- numbers — overlapping and awkward. While the countdown is on, force the
   -- Sound/TTS lead to 0 (cue fires AT cast, after the count) and lock the slider;
-  -- restore the prior value when unchecked.
-  local savedSoundLead = o.soundLeadSeconds or 0
-  local countdownLocked = false
+  -- restore the prior value when unchecked. The restore value is stashed in a
+  -- PERSISTENT field (o.savedSoundLead) — not a session local — because forcing
+  -- the slider to 0 writes 0 through to SavedVariables, so the original would
+  -- otherwise be lost across /reload (a settings-eating bug).
   -- Grey the (otherwise brand-blue) thumb while locked so it visibly reads as
   -- non-editable. We paint the thumb a flat colour ourselves, so the native
   -- Disable() can't desaturate it — recolour it directly instead.
@@ -275,19 +276,21 @@ function Options.BuildPage(host)
     if locked then
       thumb:SetColorTexture(0.42, 0.44, 0.48, 1)                 -- greyed
     else
-      local a = (ns.Style and ns.Style.colors and ns.Style.colors.accent) or { 0.23, 0.51, 0.96 }
-      thumb:SetColorTexture(a[1], a[2], a[3], 1)                 -- brand blue
+      local a = ns.Style and ns.Style.colors and ns.Style.colors.accent
+      if a then thumb:SetColorTexture(a[1], a[2], a[3], 1) end    -- brand blue
     end
   end
   local function applyCountdownLock(on)
-    if on and not countdownLocked then savedSoundLead = o.soundLeadSeconds or 0 end
-    countdownLocked = on
     if on then
+      -- remember the user's lead durably, once, before forcing it to 0. The
+      -- `> 0` guard means re-running this at build/reload time (when the lead is
+      -- already 0) never clobbers the remembered value.
+      if (o.soundLeadSeconds or 0) > 0 then o.savedSoundLead = o.soundLeadSeconds end
       soundLeadSlider:SetValue(0)
       if soundLeadSlider.Disable then soundLeadSlider:Disable() end
     else
       if soundLeadSlider.Enable then soundLeadSlider:Enable() end
-      soundLeadSlider:SetValue(savedSoundLead)
+      soundLeadSlider:SetValue(o.savedSoundLead or 0)
     end
     tintSoundLead(on)
   end
