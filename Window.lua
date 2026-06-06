@@ -280,14 +280,14 @@ function Window.GetFrame() return frame end
 function Window.IsShown() return frame and frame:IsShown() end
 
 -- ── shared content-group helpers (used by Saved/Timeline category dropdowns) ──
--- CoolPlanContent is emitted by gen-addon-encounter-names.ts. Provide safe
+-- ns.Content is emitted by gen-addon-encounter-names.ts. Provide safe
 -- accessors so pages don't each re-derive the grouping.
 function Window.Categories()
-  return CoolPlanContent or {}
+  return ns.Content or {}
 end
 
 function Window.CategoryByKey(key)
-  for _, cat in ipairs(CoolPlanContent or {}) do
+  for _, cat in ipairs(ns.Content or {}) do
     if cat.key == key then return cat end
   end
   return nil
@@ -331,8 +331,8 @@ end
 function Window.EncounterName(id)
   local e = ns.DB and ns.DB.GetEncounter and ns.DB.GetEncounter(id)
   if e and e.name and e.name ~= "" then return e.name end
-  if CoolPlanEncounterNames and CoolPlanEncounterNames[id] then
-    return CoolPlanEncounterNames[id]
+  if ns.EncounterNames and ns.EncounterNames[id] then
+    return ns.EncounterNames[id]
   end
   return "Encounter " .. tostring(id)
 end

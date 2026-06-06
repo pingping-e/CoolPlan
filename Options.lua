@@ -6,17 +6,6 @@ local _, ns = ...
 local Options = {}
 ns.Options = Options
 
--- Confirm dialog for "Reset settings". Reset + ReloadUI so the page rebuilds
--- against the fresh defaults (the widgets only read their values on build).
-StaticPopupDialogs = StaticPopupDialogs or {}
-StaticPopupDialogs["COOLPLAN_RESET_SETTINGS"] = {
-  text = "Reset all CoolPlan settings to defaults?\nYour UI will reload. Saved plans and frame positions are kept.",
-  button1 = OKAY or "Okay",
-  button2 = CANCEL or "Cancel",
-  OnAccept = function() ns.DB.ResetOptions(); ReloadUI() end,
-  timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
-}
-
 local CATEGORIES = {
   { "personal_defensive", "Personal def" },
   { "external_defensive", "External def" },
@@ -109,6 +98,46 @@ local function alertModeLabel(mode)
   if mode == "none" then return "None (screen only)"
   elseif mode == "tts" then return "Text-to-speech"
   else return "Sound" end
+end
+
+-- Confirm dialog for "Reset settings" — a self-contained frame, NOT Blizzard's
+-- shared `StaticPopupDialogs`. Writing into that global table taints it, and
+-- protected UIs that read it (e.g. the transmog outfit dropdown, which drives
+-- ChangeDisplayedOutfit) inherit the taint → ADDON_ACTION_FORBIDDEN. A private
+-- frame keeps the taint contained. Reset + ReloadUI so the page rebuilds against
+-- fresh defaults (widgets only read their values on build).
+local resetConfirm
+local function showResetConfirm()
+  if not resetConfirm then
+    local f = CreateFrame("Frame", "CoolPlanResetConfirm", UIParent, "BackdropTemplate")
+    f:SetSize(360, 130)
+    f:SetPoint("CENTER")
+    f:SetFrameStrata("FULLSCREEN_DIALOG")
+    f:SetToplevel(true)
+    f:EnableMouse(true)
+    if ns.Style and ns.Style.Panel then
+      ns.Style.Panel(f, 0.98)
+    elseif f.SetBackdrop then
+      f:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+      f:SetBackdropColor(0.06, 0.06, 0.08, 0.98)
+      f:SetBackdropBorderColor(0.3, 0.3, 0.35, 1)
+    end
+    local lbl = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    lbl:SetPoint("TOP", 0, -18)
+    lbl:SetWidth(324)
+    lbl:SetText("Reset all CoolPlan settings to defaults?\nYour UI will reload. Saved plans and frame positions are kept.")
+    local ok = button(f, OKAY or "Okay", 90, 0, 0, function()
+      f:Hide(); ns.DB.ResetOptions(); ReloadUI()
+    end)
+    ok:ClearAllPoints(); ok:SetPoint("BOTTOMRIGHT", -18, 16)
+    local cancel = button(f, CANCEL or "Cancel", 90, 0, 0, function() f:Hide() end)
+    cancel:ClearAllPoints(); cancel:SetPoint("BOTTOMLEFT", 18, 16)
+    if UISpecialFrames and not tContains(UISpecialFrames, "CoolPlanResetConfirm") then
+      tinsert(UISpecialFrames, "CoolPlanResetConfirm") -- Esc closes
+    end
+    resetConfirm = f
+  end
+  resetConfirm:Show()
 end
 
 -- Attach all the option widgets to the Window's content host. The 860×600 window
@@ -433,7 +462,7 @@ function Options.BuildPage(host)
   local stopB = button(host, "Stop", 70, 0, 0, function() ns.Scheduler.Stop() end)
   stopB:ClearAllPoints(); stopB:SetPoint("LEFT", demoB, "RIGHT", 8, 0)
   local resetAllB = button(host, "Reset settings", 130, 0, 0,
-    function() StaticPopup_Show("COOLPLAN_RESET_SETTINGS") end)
+    function() showResetConfirm() end)
   resetAllB:ClearAllPoints(); resetAllB:SetPoint("LEFT", stopB, "RIGHT", 8, 0)
 
   if ns.Style then

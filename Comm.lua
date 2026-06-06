@@ -271,7 +271,7 @@ function Comm.OnReceived(sender, str)
   local bossName
   if nEnc == 1 then
     bossName = (firstEnc.name and firstEnc.name ~= "" and firstEnc.name)
-      or (CoolPlanEncounterNames and CoolPlanEncounterNames[firstId])
+      or (ns.EncounterNames and ns.EncounterNames[firstId])
       or ("Encounter " .. firstId)
   else
     bossName = nEnc .. " encounters"
