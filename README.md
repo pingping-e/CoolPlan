@@ -1,32 +1,63 @@
+<div align="center">
+
 # CoolPlan
 
-On-screen / sound / TTS **cooldown reminders** for World of Warcraft Mythic+ and
-raid encounters. Companion addon to **[coolplan.team](https://coolplan.team)** —
-plan a team's cooldowns on the website, export a string, import it here, and the
-reminders fire automatically during the matching boss.
+**On-screen / sound / TTS cooldown reminders for World of Warcraft Mythic+ and raids.**
+
+Plan a team's cooldowns on **[coolplan.team](https://coolplan.team)**, export a string,
+import it in game — reminders then fire automatically during the matching boss.
+
+![CoolPlan in game — timeline preview with anticipation countdown](docs/img/demo.gif)
+
+</div>
+
+## Plan on the web, play in game
+
+| 1 · Plan on [coolplan.team](https://coolplan.team) | 2 · Reminders fire in game |
+|:--:|:--:|
+| ![Boss timeline on coolplan.team](docs/img/web-timeline.png) | ![In-combat anticipation HUD](docs/img/hud-incombat.png) |
+
+The website is the planning tool; this addon is the in-game display. Each player
+sees only their own cooldowns — raid-wide defensives and Bloodlust are shown to
+everyone.
 
 ## How it works
 
-1. On [coolplan.team](https://coolplan.team), open a boss timeline and click
-   **Export to Addon**. Rename each player to your real character names (so
-   reminders filter to the right person), then copy the string.
-2. In game: `/coolplan` → **Import / Export** tab → paste → **Load Plans**.
-3. Pull that boss. The addon matches the encounter and shows each player only
-   their own cooldowns (raid-wide defensives are shown to everyone).
+**1. Export from the website.** Open a boss timeline on
+[coolplan.team](https://coolplan.team) and click **Export to Addon**. Rename each
+player to your real character names so reminders filter to the right person, then
+copy the string.
 
+<img src="docs/img/web-export.png" width="520" alt="Export to Addon dialog on coolplan.team" />
+
+**2. Import in game.** `/coolplan` → **Import / Export** → paste → **Load Plans**.
 The plan format is plain text, so you can also hand-edit it in the box.
+
+<img src="docs/img/import.png" width="620" alt="Import / Export tab in game" />
+
+**3. Pull the boss.** The addon matches the encounter and shows each player their
+own cooldowns on an anticipation HUD with a countdown and a smooth depleting bar.
 
 ## Features
 
-- **Anticipation HUD** — icon / icon+name / bar styles, with a countdown and a
-  smooth depleting bar; configurable lead time, position, scale, font and color.
-- **Sound or TTS** alerts, with separate timing from the on-screen display.
-- **Upcoming queue** of the next few cooldowns.
-- **Boss ability timeline** (optional) layered onto the same countdown.
-- **Per-character saved plans** with a named library (multiple plans per boss),
-  a dungeon → boss browser, and a timeline preview with a "Test" playback.
-- **Share to party** — broadcast the active plan to party members in one click.
-- **Minimap button** (collects cleanly into MinimapButtonButton / Titan / etc).
+**Saved plan library** — multiple named plans per boss, a dungeon → boss browser,
+Use / Rename / Share / Export per plan, and one-click **Share to party**.
+
+<img src="docs/img/saved-plans.png" width="620" alt="Saved Plans library" />
+
+**Timeline preview** — scrub the whole plan, zoom/pan, and **Test** playback (1x or
+Shift-click 3x) to rehearse before the pull.
+
+<img src="docs/img/timeline.png" width="620" alt="In-game timeline preview" />
+
+**Fully configurable** — HUD style (icon / icon+name / bar), lead time, position,
+scale, font and color; sound **or** TTS alerts with separate timing; an upcoming
+queue; per-category show/hide; and an optional boss-ability timeline.
+
+<img src="docs/img/options.png" width="620" alt="Options panel" />
+
+Other niceties: a **minimap button** (collects cleanly into MinimapButtonButton /
+Titan / etc.) and per-character saved data.
 
 ## Slash commands
 
@@ -53,8 +84,7 @@ The plan format is plain text, so you can also hand-edit it in the box.
 
 - No dependencies — bundles LibStub, LibDataBroker-1.1 and LibDBIcon-1.0 under
   `Libs/` (each under its own license).
-- The website is the planning tool; this addon is the in-game display. Feedback
-  and bug reports: the Discord linked on coolplan.team.
+- Feedback and bug reports: the Discord linked on [coolplan.team](https://coolplan.team).
 
 ## License
 

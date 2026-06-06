@@ -4,3 +4,9 @@
 package-as: CoolPlan
 
 enable-nolib-creation: no
+
+# README screenshots live in docs/ for GitHub only — keep them out of the
+# packaged addon so the in-game download stays small.
+ignore:
+  - docs
+  - .github
