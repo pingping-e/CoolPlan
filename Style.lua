@@ -106,14 +106,22 @@ function Style.Button(btn)
   if not btn or btn._cpSkinned then return end
   if has(btn, "GetObjectType") and btn:GetObjectType() ~= "Button" then return end
 
-  -- blank out the stock textures (guarded — not every Button has them)
-  local empty = function(set)
-    if has(btn, set) then pcall(btn[set], btn, nil) end
+  -- Blank out the stock textures (guarded — not every Button has them). The
+  -- UIPanelButtonTemplate can RE-ASSERT its bronze stock texture when the button
+  -- is next shown (e.g. opening the window after a /reload), which intermittently
+  -- covered our flat skin → "red/gold" buttons. So clearing once at skin time
+  -- isn't enough: re-run the blanking on every OnShow so our skin always wins.
+  local function blank()
+    local empty = function(set)
+      if has(btn, set) then pcall(btn[set], btn, nil) end
+    end
+    empty("SetNormalTexture"); empty("SetPushedTexture")
+    empty("SetDisabledTexture"); empty("SetHighlightTexture")
+    if has(btn, "GetNormalTexture") and btn:GetNormalTexture() then btn:GetNormalTexture():SetTexture(nil) end
+    if has(btn, "GetPushedTexture") and btn:GetPushedTexture() then btn:GetPushedTexture():SetTexture(nil) end
   end
-  empty("SetNormalTexture"); empty("SetPushedTexture")
-  empty("SetDisabledTexture"); empty("SetHighlightTexture")
-  if has(btn, "GetNormalTexture") and btn:GetNormalTexture() then btn:GetNormalTexture():SetTexture(nil) end
-  if has(btn, "GetPushedTexture") and btn:GetPushedTexture() then btn:GetPushedTexture():SetTexture(nil) end
+  blank()
+  if has(btn, "HookScript") then pcall(btn.HookScript, btn, "OnShow", ns.wrap(blank)) end
 
   -- flat background + 1px border via our own textures
   local bg = btn:CreateTexture(nil, "BACKGROUND")

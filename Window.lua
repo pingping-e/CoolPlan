@@ -108,6 +108,12 @@ end
 local function build()
   local o = ns.DB and ns.DB.Options and ns.DB.Options()
   local f = CreateFrame("Frame", "CoolPlanWindow", UIParent, "BackdropTemplate")
+  -- Esc closes the window, like most addons. UISpecialFrames hides the named
+  -- frame on Esc; closing is just a Hide (lastPage is saved on open, not close),
+  -- so nothing is lost. Guard against a double-insert if build() ever reruns.
+  if not tContains(UISpecialFrames, "CoolPlanWindow") then
+    tinsert(UISpecialFrames, "CoolPlanWindow")
+  end
   -- Size bounds: min so the content-heavy Options page can lay out (the bottom
   -- action row must clear the right-hand column, hence 940); max so it can never
   -- grow past the screen and put the resize grip out of reach.
