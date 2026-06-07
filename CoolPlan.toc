@@ -8,6 +8,7 @@
 ## X-Website: https://coolplan.team
 ## X-License: MIT
 ## X-Curse-Project-ID: 1563905
+## X-Wago-ID: qGZOnaNd
 
 Libs\LibStub\LibStub.lua
 Libs\LibDeflate\LibDeflate.lua
