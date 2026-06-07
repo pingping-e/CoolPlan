@@ -135,6 +135,146 @@ local function promptRename(id, index, current)
   prompt.box:SetFocus()
 end
 
+-- ── share-dungeon popup ──────────────────────────────────────────────────────
+-- A self-built frame (NOT Blizzard StaticPopupDialogs — that taints the shared
+-- global). Lists the selected dungeon's bosses; bosses with an active plan get a
+-- checkbox (checked), bosses without are greyed/skipped. Shares the ACTIVE plan
+-- of each checked boss in one transfer.
+local sharePrompt
+
+-- The selected dungeon's bosses with their active-plan status.
+local function dungeonShareList()
+  local out = {}
+  local groups = ns.Window.Groups(selCat)
+  local grp = groups[selGrp]
+  if not grp then return out end
+  for _, b in ipairs(grp.bosses or {}) do
+    local id = ns.Window.ResolveBossId(b.name, b.id)
+    local plan
+    if id then
+      local e = ns.DB.GetEncounter(id)
+      if e and e.active and e.active > 0 and e.plans[e.active] then
+        plan = e.plans[e.active]
+      end
+    end
+    out[#out + 1] = { name = b.name, id = id, plan = plan } -- plan nil = skipped
+  end
+  return out
+end
+
+local function shareRow(f, i)
+  if f.rows[i] then return f.rows[i] end
+  local r = CreateFrame("Frame", nil, f)
+  r:SetSize(348, 20)
+  r.cb = CreateFrame("CheckButton", nil, r, "UICheckButtonTemplate")
+  r.cb:SetSize(20, 20)
+  r.cb:SetPoint("LEFT", 0, 0)
+  r.txt = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  r.txt:SetPoint("LEFT", r.cb, "RIGHT", 4, 0)
+  r.txt:SetPoint("RIGHT", -4, 0)
+  r.txt:SetJustifyH("LEFT")
+  f.rows[i] = r
+  return r
+end
+
+local function buildSharePrompt()
+  local f = CreateFrame("Frame", "CoolPlanShareDungeon", UIParent, "BackdropTemplate")
+  f:SetSize(380, 200)
+  f:SetPoint("CENTER")
+  f:SetFrameStrata("FULLSCREEN_DIALOG")
+  f:SetToplevel(true)
+  f:EnableMouse(true)
+  f:SetMovable(true)
+  f:RegisterForDrag("LeftButton")
+  f:SetScript("OnDragStart", f.StartMoving)
+  f:SetScript("OnDragStop", f.StopMovingOrSizing)
+  if ns.Style and ns.Style.Panel then
+    ns.Style.Panel(f, 0.98)
+  elseif f.SetBackdrop then
+    f:SetBackdrop({
+      bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+      edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+      tile = true, tileSize = 32, edgeSize = 16,
+      insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+  end
+  f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  f.title:SetPoint("TOPLEFT", 16, -14)
+  f.sub = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  f.sub:SetPoint("TOPLEFT", 16, -34)
+  f.sub:SetText("Only each boss's active plan is shared.")
+  f.rows = {}
+  f.shareBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+  f.shareBtn:SetSize(150, 22)
+  f.shareBtn:SetPoint("BOTTOMRIGHT", -16, 14)
+  f.cancelBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+  f.cancelBtn:SetSize(90, 22)
+  f.cancelBtn:SetPoint("BOTTOMLEFT", 16, 14)
+  f.cancelBtn:SetText("Cancel")
+  f.cancelBtn:SetScript("OnClick", ns.wrap(function() f:Hide() end))
+  if UISpecialFrames and not tContains(UISpecialFrames, "CoolPlanShareDungeon") then
+    tinsert(UISpecialFrames, "CoolPlanShareDungeon") -- Esc closes
+  end
+  if ns.Style then ns.Style.Apply(f) end
+  return f
+end
+
+local function openShareDungeon()
+  sharePrompt = sharePrompt or buildSharePrompt()
+  local f = sharePrompt
+  local groups = ns.Window.Groups(selCat)
+  local grp = groups[selGrp]
+  f.title:SetText("Share dungeon \226\128\148 " .. ((grp and grp.name) or "\226\128\148"))
+
+  local list = dungeonShareList()
+  local shown = 0
+  local y = -56
+  for _, item in ipairs(list) do
+    shown = shown + 1
+    local r = shareRow(f, shown)
+    r:ClearAllPoints(); r:SetPoint("TOPLEFT", 16, y); r:Show()
+    y = y - 22
+    if item.plan then
+      r.cb:Show(); r.cb:Enable(); r.cb:SetChecked(true)
+      r.txt:SetText(("|cff88ccff%s|r |cff888888\194\183 %s|r"):format(item.name, item.plan.label or "?"))
+      r._id, r._has = item.id, true
+    else
+      r.cb:Hide(); r.cb:SetChecked(false)
+      r.txt:SetText(("|cff666666%s  (no active plan)|r"):format(item.name))
+      r._id, r._has = nil, false
+    end
+  end
+  for i = shown + 1, #f.rows do f.rows[i]:Hide() end
+
+  local function checkedIds()
+    local ids = {}
+    for i = 1, shown do
+      local r = f.rows[i]
+      if r._has and r.cb:GetChecked() then ids[#ids + 1] = r._id end
+    end
+    return ids
+  end
+  local function updateCount()
+    local n = #checkedIds()
+    f.shareBtn:SetText(("Share to party (%d)"):format(n))
+    if n > 0 then f.shareBtn:Enable() else f.shareBtn:Disable() end
+  end
+  for i = 1, shown do
+    local r = f.rows[i]
+    r.cb:SetScript("OnClick", r._has and ns.wrap(updateCount) or nil)
+  end
+  f.shareBtn:SetScript("OnClick", ns.wrap(function()
+    local ids = checkedIds()
+    if #ids == 0 then return end
+    f:Hide()
+    ns.Comm.ShareEncounters(ids)
+  end))
+
+  f:SetHeight(math.max(150, 56 + math.max(1, shown) * 22 + 44))
+  updateCount()
+  f:Show()
+end
+
 -- ── list build (for the SELECTED encounter only) ─────────────────────────────
 local function buildItems()
   local items = {}
@@ -191,9 +331,8 @@ function Manager.Refresh()
     row.ren:SetScript("OnClick", ns.wrap(function() promptRename(id, it.index, it.p.label) end))
     row.shr:Show()
     row.shr:SetScript("OnClick", ns.wrap(function()
-      ns.DB.SetActive(id, it.index)   -- share what's shown on this row
-      ns.Comm.ShareEncounter(id)
-      Manager.Refresh()
+      -- send THIS plan verbatim; does NOT change your active plan (index arg).
+      ns.Comm.ShareEncounter(id, it.index)
     end))
     row.del:Show()
     row.del:SetScript("OnClick", ns.wrap(function() ns.DB.DeletePlan(id, it.index); Manager.Refresh() end))
@@ -304,22 +443,31 @@ function Manager.BuildPage(host)
     end)
   grpDD:SetPoint("LEFT", catDD, "RIGHT", 8, 0)
 
-  -- boss dropdown
+  -- dungeon-level action: share every boss's active plan in this dungeon (popup
+  -- lets you pick a subset). Sits on the dungeon row, BEFORE the boss selector,
+  -- so its scope reads as "this dungeon", not "this boss".
+  local shareDungeonBtn = CreateFrame("Button", nil, host, "UIPanelButtonTemplate")
+  shareDungeonBtn:SetSize(130, 22)
+  shareDungeonBtn:SetText("Share dungeon")
+  shareDungeonBtn:SetPoint("LEFT", grpDD, "RIGHT", 12, 0)
+  shareDungeonBtn:SetScript("OnClick", ns.wrap(openShareDungeon))
+
+  -- boss dropdown (second row — a drilldown under the dungeon)
   bossDD = ns.Window.MakeDropdown(host, "CoolPlanMgrBossDD", 210, bossItems,
     function(idx)
       selBoss = idx
       resolveSelEnc()
       Manager.Refresh()
     end)
-  bossDD:SetPoint("LEFT", grpDD, "RIGHT", 8, 0)
+  bossDD:SetPoint("TOPLEFT", catDD, "BOTTOMLEFT", 0, -6)
 
   -- selected boss header
   header = host:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  header:SetPoint("TOPLEFT", 12, -64)
+  header:SetPoint("TOPLEFT", bossDD, "BOTTOMLEFT", 20, -12)
 
   -- scroll list of saved notes for the selected boss
   local sf = CreateFrame("ScrollFrame", "CoolPlanManagerScroll", host, "UIPanelScrollFrameTemplate")
-  sf:SetPoint("TOPLEFT", 8, -90)
+  sf:SetPoint("TOPLEFT", header, "BOTTOMLEFT", -12, -8)
   sf:SetPoint("BOTTOMRIGHT", -28, 44)
   host.scroll = sf
 
@@ -339,14 +487,6 @@ function Manager.BuildPage(host)
   importBtn:SetText("Import / Export")
   importBtn:SetPoint("BOTTOMLEFT", 8, 12)
   importBtn:SetScript("OnClick", ns.wrap(function() ns.Window.Open("import") end))
-
-  local shareBtn = CreateFrame("Button", nil, host, "UIPanelButtonTemplate")
-  shareBtn:SetSize(130, 22)
-  shareBtn:SetText("Share to Party")
-  shareBtn:SetPoint("LEFT", importBtn, "RIGHT", 8, 0)
-  shareBtn:SetScript("OnClick", ns.wrap(function()
-    if selEnc then ns.Comm.ShareEncounter(selEnc) else ns.Comm.ShareActive() end
-  end))
 
   ensureGrpSelection()
   ensureBossSelection()

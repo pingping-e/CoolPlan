@@ -117,58 +117,75 @@ local function broadcast(str)
   return true, total
 end
 
--- Public: share the active plan of the encounter we're scheduling, or — if not
--- in an encounter — every encounter's active plan (whole library).
+-- Public: `/coolplan share`. If armed at a boss, share that boss; otherwise
+-- point the user at Saved Plans (per-plan / whole-dungeon share live there).
+-- NOTE: deliberately NO whole-library dump — that shipped plans for dungeons the
+-- party isn't running and cluttered recipients.
 function Comm.ShareActive()
   if not inParty() then
     ns.Print("not in a party — join a group to share a plan.")
     return
   end
-
   local lib = ns.DB.Library()
-  local hasAny = false
-  for _ in pairs(lib) do hasAny = true; break end
-  if not hasAny then
-    ns.Print("no saved plans to share. /coolplan edit to import one first.")
-    return
-  end
-
-  -- Prefer the encounter currently armed; otherwise export all active plans.
-  local onlyId = nil
-  if ns.Scheduler and ns.Scheduler.ActiveEncounter then
-    local a = ns.Scheduler.ActiveEncounter()
-    if a and a ~= -1 and lib[a] then onlyId = a end
-  end
-
-  local payload = ns.DB.ToSerializable(onlyId)
-  local nEnc = 0
-  for _ in pairs(payload) do nEnc = nEnc + 1 end
-  if nEnc == 0 then
-    ns.Print("no active plan to share.")
-    return
-  end
-
-  local str = ns.Format.Serialize(payload, { source = "share" })
-  local ok, total = broadcast(str)
-  if ok then
-    ns.Print(("sharing %d plan(s) to %s (%d chunk%s)…"):format(
-      nEnc, channel():lower(), total, total == 1 and "" or "s"))
+  local armed = ns.Scheduler and ns.Scheduler.ActiveEncounter and ns.Scheduler.ActiveEncounter()
+  if armed and armed ~= -1 and lib[armed] then
+    Comm.ShareEncounter(armed)
+  else
+    ns.Print("open Saved Plans (/coolplan plans) to share a boss plan, or a whole dungeon.")
   end
 end
 
--- Public: share one specific encounter's active plan (used by Manager rows).
-function Comm.ShareEncounter(id)
+-- Public: share one encounter. `index` picks a specific plan (used by Manager
+-- rows so the clicked plan is sent verbatim WITHOUT changing your active plan);
+-- omit it to send the encounter's current active plan.
+function Comm.ShareEncounter(id, index)
   if not inParty() then
     ns.Print("not in a party — join a group to share a plan.")
     return
   end
   local lib = ns.DB.Library()
   if not lib[id] then return end
-  local str = ns.Format.Serialize(ns.DB.ToSerializable(id), { source = "share" })
+  local payload = ns.DB.ToSerializable(id, index)
+  local nEnc = 0
+  for _ in pairs(payload) do nEnc = nEnc + 1 end
+  if nEnc == 0 then
+    ns.Print("nothing to share for this boss (no active plan).")
+    return
+  end
+  local str = ns.Format.Serialize(payload, { source = "share" })
   local ok, total = broadcast(str)
   if ok then
     ns.Print(("sharing %s to %s (%d chunk%s)…"):format(
       lib[id].name or ("encounter " .. id), channel():lower(), total, total == 1 and "" or "s"))
+  end
+end
+
+-- Public: share the ACTIVE plan of several encounters at once (the "Share
+-- dungeon" popup hands us the checked bosses). Disarmed/empty encounters drop
+-- out naturally (ToSerializable skips them).
+function Comm.ShareEncounters(ids)
+  if not inParty() then
+    ns.Print("not in a party — join a group to share a plan.")
+    return
+  end
+  local lib = ns.DB.Library()
+  local payload = {}
+  for _, id in ipairs(ids or {}) do
+    if lib[id] then
+      for k, v in pairs(ns.DB.ToSerializable(id)) do payload[k] = v end
+    end
+  end
+  local nEnc = 0
+  for _ in pairs(payload) do nEnc = nEnc + 1 end
+  if nEnc == 0 then
+    ns.Print("no active plans to share.")
+    return
+  end
+  local str = ns.Format.Serialize(payload, { source = "share" })
+  local ok, total = broadcast(str)
+  if ok then
+    ns.Print(("sharing %d boss plan(s) to %s (%d chunk%s)…"):format(
+      nEnc, channel():lower(), total, total == 1 and "" or "s"))
   end
 end
 
@@ -352,8 +369,49 @@ function Comm.PromptAccept(sender, bossName, plans)
 
   prompt._sender = sender
   prompt._plans = plans
-  prompt.body:SetText(("|cffffd200%s|r shared\n|cff88ccff%s|r\n\nAdd it to your saved plans?"):format(
-    tostring(sender), tostring(bossName)))
+
+  -- Build a transparent summary of what's arriving: each boss name + cooldown
+  -- count (+boss timeline marker), and a note that accepting makes them active.
+  -- (Plan labels aren't carried in the wire format, so we show boss + counts.)
+  local enc = {}
+  for id, p in pairs(plans) do
+    local nm = (p.name and p.name ~= "" and p.name)
+      or (ns.EncounterNames and ns.EncounterNames[id])
+      or ("Encounter " .. tostring(id))
+    enc[#enc + 1] = {
+      name = nm,
+      cd = (p.reminders and #p.reminders) or 0,
+      hasBoss = p.boss and #p.boss > 0,
+    }
+  end
+  table.sort(enc, function(a, b) return a.name < b.name end)
+  local nEnc = #enc
+
+  local lines = {}
+  if nEnc <= 1 then
+    lines[#lines + 1] = ("|cffffd200%s|r shared a plan:"):format(tostring(sender))
+    lines[#lines + 1] = ""
+    local e1 = enc[1]
+    if e1 then
+      lines[#lines + 1] = ("|cff88ccff%s|r |cff888888(%d cd%s)|r"):format(
+        e1.name, e1.cd, e1.hasBoss and ", +boss timeline" or "")
+    end
+  else
+    lines[#lines + 1] = ("|cffffd200%s|r shared a dungeon plan \226\128\148 %d bosses:"):format(tostring(sender), nEnc)
+    lines[#lines + 1] = ""
+    for _, e1 in ipairs(enc) do
+      lines[#lines + 1] = ("|cff88ccff%s|r |cff888888(%d cd%s)|r"):format(
+        e1.name, e1.cd, e1.hasBoss and ", +tl" or "")
+    end
+  end
+  lines[#lines + 1] = ""
+  local it = (nEnc <= 1) and "it" or "them"
+  lines[#lines + 1] = ("|cff888888Accepting adds %s and makes %s active.|r"):format(it, it)
+
+  prompt.body:SetText(table.concat(lines, "\n"))
+  -- grow the frame to fit (title 40 + body + gap 16 + button 22 + pad 18)
+  local bh = (prompt.body.GetStringHeight and prompt.body:GetStringHeight()) or (#lines * 13)
+  prompt:SetHeight(math.min(420, math.max(130, 40 + bh + 16 + 22 + 18)))
   prompt:Show()
 end
 

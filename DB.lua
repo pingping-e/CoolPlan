@@ -220,8 +220,23 @@ function DB.AddPlan(id, encName, label, reminders, boss)
     return 0 -- nothing to store
   end
 
+  -- De-duplicate the label within THIS encounter, file-copy style: a second
+  -- "Speed comp" becomes "Speed comp (2)", a third "(3)", etc. Keeps repeated
+  -- shares/imports from silently producing ambiguous same-name rows.
+  local label2 = (label and label ~= "" and label) or ("Plan " .. (#e.plans + 1))
+  do
+    local exists = function(l)
+      for _, p in ipairs(e.plans) do if p.label == l then return true end end
+      return false
+    end
+    if exists(label2) then
+      local base, n = label2, 1
+      repeat n = n + 1; label2 = base .. " (" .. n .. ")" until not exists(label2)
+    end
+  end
+
   e.plans[#e.plans + 1] = {
-    label = (label and label ~= "" and label) or ("Plan " .. (#e.plans + 1)),
+    label = label2,
     reminders = reminders or {},
     boss = hasBoss and boss or nil,
   }
