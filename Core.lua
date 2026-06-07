@@ -21,6 +21,7 @@ Core:SetScript("OnEvent", ns.wrap(function(_, event, ...)
     local name = ...
     if name == addonName then
       ns.DB.Init()
+      Core:UnregisterEvent("ADDON_LOADED") -- only needed for our own load
     end
   elseif event == "PLAYER_LOGIN" then
     ns.Reminders.Init()

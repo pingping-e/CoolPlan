@@ -816,7 +816,7 @@ function Reminders.RenderTick(active, upcoming, o)
   end
 
   if o.showQueue and upcoming and #upcoming > 0 then
-    local def = o.textColor or { r = 1, g = 0.95, b = 0.4 }
+    local def = validColor(o.textColor) and o.textColor or { r = 1, g = 0.95, b = 0.4 }
     local style = o.hudStyle or "iconName"
     local lead = o.leadSeconds or 4
     for i, row in ipairs(queue.rows) do

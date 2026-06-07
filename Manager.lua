@@ -48,7 +48,7 @@ local function makeBadge(parent, w)
   hl:SetColorTexture(1, 1, 1, 0.12)
   local fs = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   fs:SetPoint("CENTER")
-  fs:SetText("\226\151\143 Active")                  -- "● Active"
+  fs:SetText("Active")                               -- green badge; ASCII-only (some client fonts lack glyphs)
   fs:SetTextColor(0.66, 1.0, 0.66)                   -- bright green text
   f.text = fs
   return f
@@ -74,15 +74,22 @@ local function getRow(i)
   row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   row.text:SetPoint("LEFT", row.use, "RIGHT", 10, 0)
   row.text:SetJustifyH("LEFT")
-  row.text:SetWidth(150)
+  -- one-line, no wrap: long "Shared from X" names clip instead of wrapping under
+  -- the row. The right edge is clamped to the buttons (set after they exist).
+  if row.text.SetWordWrap then row.text:SetWordWrap(false) end
 
   -- 7px gaps so the actions read as separate buttons instead of one strip.
   -- Widths give each label comfortable padding (Rename is the widest word).
   local GAP = 7
-  row.exp = tinyBtn(row, "Export", 62); row.exp:SetPoint("RIGHT", -4, 0)
-  row.del = tinyBtn(row, "Delete", 60); row.del:SetPoint("RIGHT", row.exp, "LEFT", -GAP, 0)
-  row.shr = tinyBtn(row, "Share", 56);  row.shr:SetPoint("RIGHT", row.del, "LEFT", -GAP, 0)
+  -- Delete is the rightmost (most destructive) action; others sit to its left.
+  row.del = tinyBtn(row, "|cffff6666Delete|r", 60); row.del:SetPoint("RIGHT", -4, 0)
+  row.exp = tinyBtn(row, "Export", 62); row.exp:SetPoint("RIGHT", row.del, "LEFT", -GAP, 0)
+  row.shr = tinyBtn(row, "Send", 56);  row.shr:SetPoint("RIGHT", row.exp, "LEFT", -GAP, 0)
   row.ren = tinyBtn(row, "Rename", 72); row.ren:SetPoint("RIGHT", row.shr, "LEFT", -GAP, 0)
+
+  -- clamp the name's right edge to the leftmost button so it never overlaps or
+  -- wraps; combined with SetWordWrap(false) above, long names clip on one line.
+  row.text:SetPoint("RIGHT", row.ren, "LEFT", -10, 0)
 
   if ns.Style then
     ns.Style.Button(row.exp); ns.Style.Button(row.del)
@@ -143,6 +150,21 @@ end
 local sharePrompt
 
 -- The selected dungeon's bosses with their active-plan status.
+-- Unique caster names in a plan (first-seen order) for the share popup — shows
+-- WHO is in the plan rather than the plan label. reminders is an in-memory table
+-- (already parsed), so this is cheap even across all bosses.
+local function planCasters(plan)
+  local seen, names = {}, {}
+  for _, r in ipairs(plan and plan.reminders or {}) do
+    local p = r.player
+    if p and p ~= "" and not seen[p] then
+      seen[p] = true
+      names[#names + 1] = p
+    end
+  end
+  return table.concat(names, ", ")
+end
+
 local function dungeonShareList()
   local out = {}
   local groups = ns.Window.Groups(selCat)
@@ -165,21 +187,27 @@ end
 local function shareRow(f, i)
   if f.rows[i] then return f.rows[i] end
   local r = CreateFrame("Frame", nil, f)
-  r:SetSize(348, 20)
+  r:SetSize(448, 20)
   r.cb = CreateFrame("CheckButton", nil, r, "UICheckButtonTemplate")
   r.cb:SetSize(20, 20)
   r.cb:SetPoint("LEFT", 0, 0)
   r.txt = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  -- explicit SetFontObject (not just the template arg) so the font's CJK/Hangul
+  -- fallback chain is applied — same fix that made the import EditBox render 한글.
+  if GameFontHighlightSmall then r.txt:SetFontObject(GameFontHighlightSmall) end
   r.txt:SetPoint("LEFT", r.cb, "RIGHT", 4, 0)
   r.txt:SetPoint("RIGHT", -4, 0)
   r.txt:SetJustifyH("LEFT")
+  -- one line, no wrap: long caster lists clip instead of wrapping into the next
+  -- row (wrapping made rows overlap). The wider popup fits a 5-man list on a line.
+  if r.txt.SetWordWrap then r.txt:SetWordWrap(false) end
   f.rows[i] = r
   return r
 end
 
 local function buildSharePrompt()
   local f = CreateFrame("Frame", "CoolPlanShareDungeon", UIParent, "BackdropTemplate")
-  f:SetSize(380, 200)
+  f:SetSize(500, 200)
   f:SetPoint("CENTER")
   f:SetFrameStrata("FULLSCREEN_DIALOG")
   f:SetToplevel(true)
@@ -202,7 +230,7 @@ local function buildSharePrompt()
   f.title:SetPoint("TOPLEFT", 16, -14)
   f.sub = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   f.sub:SetPoint("TOPLEFT", 16, -34)
-  f.sub:SetText("Only each boss's active plan is shared.")
+  f.sub:SetText("Active plan per boss. Row names must match party members.")
   f.rows = {}
   f.shareBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   f.shareBtn:SetSize(150, 22)
@@ -224,7 +252,7 @@ local function openShareDungeon()
   local f = sharePrompt
   local groups = ns.Window.Groups(selCat)
   local grp = groups[selGrp]
-  f.title:SetText("Share dungeon \226\128\148 " .. ((grp and grp.name) or "\226\128\148"))
+  f.title:SetText("Send this dungeon - " .. ((grp and grp.name) or "-"))
 
   local list = dungeonShareList()
   local shown = 0
@@ -233,10 +261,14 @@ local function openShareDungeon()
     shown = shown + 1
     local r = shareRow(f, shown)
     r:ClearAllPoints(); r:SetPoint("TOPLEFT", 16, y); r:Show()
-    y = y - 22
+    y = y - 26
     if item.plan then
       r.cb:Show(); r.cb:Enable(); r.cb:SetChecked(true)
-      r.txt:SetText(("|cff88ccff%s|r |cff888888\194\183 %s|r"):format(item.name, item.plan.label or "?"))
+      local who = planCasters(item.plan)
+      if who == "" then who = item.plan.label or "?" end
+      -- keep the caster names OUTSIDE the color code: Hangul/CJK inside a |c..|r
+      -- color escape can render as boxes on some clients; plain text is fine.
+      r.txt:SetText(("|cff88ccff%s|r  %s"):format(item.name, who))
       r._id, r._has = item.id, true
     else
       r.cb:Hide(); r.cb:SetChecked(false)
@@ -256,7 +288,7 @@ local function openShareDungeon()
   end
   local function updateCount()
     local n = #checkedIds()
-    f.shareBtn:SetText(("Share to party (%d)"):format(n))
+    f.shareBtn:SetText(("Send to party (%d)"):format(n))
     if n > 0 then f.shareBtn:Enable() else f.shareBtn:Disable() end
   end
   for i = 1, shown do
@@ -270,9 +302,64 @@ local function openShareDungeon()
     ns.Comm.ShareEncounters(ids)
   end))
 
-  f:SetHeight(math.max(150, 56 + math.max(1, shown) * 22 + 44))
+  f:SetHeight(math.max(160, 60 + math.max(1, shown) * 26 + 46))
   updateCount()
   f:Show()
+end
+
+-- ── clear-whole-dungeon confirm ──────────────────────────────────────────────
+-- Delete every saved plan for every boss in the selected dungeon at once.
+-- Uses a self-built confirm frame (NOT Blizzard StaticPopupDialogs — that taints
+-- the shared dialog system). Destructive, so it always confirms first.
+local clearConfirm
+local function openClearDungeon()
+  local groups = ns.Window.Groups(selCat)
+  local grp = groups[selGrp]
+  if not grp then return end
+
+  if not clearConfirm then
+    local c = CreateFrame("Frame", "CoolPlanClearConfirm", UIParent, "BackdropTemplate")
+    c:SetSize(340, 130)
+    c:SetPoint("CENTER")
+    c:SetFrameStrata("FULLSCREEN_DIALOG")
+    if ns.Style and ns.Style.Panel then ns.Style.Panel(c, 0.98) end
+    c.text = c:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    c.text:SetPoint("TOP", 0, -18)
+    c.text:SetWidth(308)
+    c.text:SetJustifyH("CENTER")
+    c.yes = CreateFrame("Button", nil, c, "UIPanelButtonTemplate")
+    c.yes:SetSize(120, 22)
+    c.yes:SetText("|cffff6666Delete all|r")
+    c.yes:SetPoint("BOTTOMRIGHT", c, "BOTTOM", -6, 16)
+    c.no = CreateFrame("Button", nil, c, "UIPanelButtonTemplate")
+    c.no:SetSize(120, 22)
+    c.no:SetText("Cancel")
+    c.no:SetPoint("BOTTOMLEFT", c, "BOTTOM", 6, 16)
+    c.yes:SetScript("OnClick", ns.wrap(function()
+      c:Hide()
+      if c._onYes then c._onYes() end
+    end))
+    c.no:SetScript("OnClick", ns.wrap(function() c:Hide() end))
+    if UISpecialFrames and not tContains(UISpecialFrames, "CoolPlanClearConfirm") then
+      tinsert(UISpecialFrames, "CoolPlanClearConfirm") -- Esc closes
+    end
+    if ns.Style then ns.Style.Apply(c) end
+    clearConfirm = c
+  end
+
+  clearConfirm.text:SetText(
+    ("Delete ALL saved plans for\n|cffffd200%s|r ?\n\n|cffff6666This cannot be undone.|r")
+      :format(grp.name or "?"))
+  clearConfirm._onYes = function()
+    local n = 0
+    for _, b in ipairs(grp.bosses or {}) do
+      local encId = ns.Window.ResolveBossId(b.name, b.id)
+      if encId and ns.DB.DeleteEncounter(encId) then n = n + 1 end
+    end
+    ns.Print(("cleared %d boss plan set(s) in %s."):format(n, grp.name or "?"))
+    Manager.Refresh()
+  end
+  clearConfirm:Show()
 end
 
 -- ── list build (for the SELECTED encounter only) ─────────────────────────────
@@ -308,6 +395,7 @@ function Manager.Refresh()
     local row = getRow(i)
     row:ClearAllPoints()
     row:SetPoint("TOPLEFT", 0, -(i - 1) * ROW_H)
+    row:SetPoint("TOPRIGHT", 0, -(i - 1) * ROW_H) -- fill content width so right buttons reach the edge
     row:Show()
     local e, id = it.e, it.id
 
@@ -408,7 +496,7 @@ function Manager.BuildPage(host)
 
   local hint = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   hint:SetPoint("TOPLEFT", 8, -6)
-  hint:SetText("Pick a dungeon / boss to browse its saved notes. Use Plan = make active (plays on pull); click the green Active chip to deactivate (nothing plays).")
+  hint:SetText("Pick a dungeon / boss to see its plans. Use Plan = arm (plays on pull); click the green Active chip to disarm.")
 
   -- category dropdown
   catDD = ns.Window.MakeDropdown(host, "CoolPlanMgrCatDD", 110,
@@ -427,7 +515,7 @@ function Manager.BuildPage(host)
       ensureBossSelection()
       Manager.Refresh()
     end)
-  catDD:SetPoint("TOPLEFT", -8, -24)
+  catDD:SetPoint("TOPLEFT", 4, -24)
   do
     local cat = ns.Window.CategoryByKey(selCat) or ns.Window.Categories()[1]
     if cat then selCat = cat.key; catDD:SetValue(cat.key, cat.label) end
@@ -447,10 +535,19 @@ function Manager.BuildPage(host)
   -- lets you pick a subset). Sits on the dungeon row, BEFORE the boss selector,
   -- so its scope reads as "this dungeon", not "this boss".
   local shareDungeonBtn = CreateFrame("Button", nil, host, "UIPanelButtonTemplate")
-  shareDungeonBtn:SetSize(130, 22)
-  shareDungeonBtn:SetText("Share dungeon")
+  shareDungeonBtn:SetSize(170, 22)
+  shareDungeonBtn:SetText("Send this dungeon")
   shareDungeonBtn:SetPoint("LEFT", grpDD, "RIGHT", 12, 0)
   shareDungeonBtn:SetScript("OnClick", ns.wrap(openShareDungeon))
+
+  -- dungeon-level action: delete every saved plan in this dungeon (confirms).
+  local clearDungeonBtn = CreateFrame("Button", nil, host, "UIPanelButtonTemplate")
+  clearDungeonBtn:SetSize(150, 22)
+  -- inline color code (not SetTextColor) so the red survives UIPanelButton's
+  -- hover/state restyling.
+  clearDungeonBtn:SetText("|cffff6666Delete this dungeon|r")
+  clearDungeonBtn:SetPoint("LEFT", shareDungeonBtn, "RIGHT", 8, 0)
+  clearDungeonBtn:SetScript("OnClick", ns.wrap(openClearDungeon))
 
   -- boss dropdown (second row — a drilldown under the dungeon)
   bossDD = ns.Window.MakeDropdown(host, "CoolPlanMgrBossDD", 210, bossItems,
@@ -468,12 +565,25 @@ function Manager.BuildPage(host)
   -- scroll list of saved notes for the selected boss
   local sf = CreateFrame("ScrollFrame", "CoolPlanManagerScroll", host, "UIPanelScrollFrameTemplate")
   sf:SetPoint("TOPLEFT", header, "BOTTOMLEFT", -12, -8)
-  sf:SetPoint("BOTTOMRIGHT", -28, 44)
+  -- right edge aligns to the "Delete this dungeon" button so the per-row action
+  -- buttons (right-anchored in each row) line up under it instead of running all
+  -- the way to the scrollbar.
+  sf:SetPoint("BOTTOM", host, "BOTTOM", 0, 12)
+  sf:SetPoint("RIGHT", clearDungeonBtn, "RIGHT", 0, 0)
   host.scroll = sf
 
   content = CreateFrame("Frame", nil, sf)
   content:SetSize(CONTENT_W, 1)
   sf:SetScrollChild(content)
+
+  -- keep the scroll child as wide as the viewport so rows (and their right-aligned
+  -- buttons) fill the panel instead of stopping at a fixed 520px.
+  local function syncContentWidth()
+    local w = sf:GetWidth()
+    if w and w > 1 then content:SetWidth(w) end
+  end
+  sf:SetScript("OnSizeChanged", ns.wrap(syncContentWidth))
+  syncContentWidth()
 
   empty = host:CreateFontString(nil, "OVERLAY", "GameFontDisableLarge")
   empty:SetPoint("CENTER", sf, "CENTER", 0, 0)
@@ -481,12 +591,7 @@ function Manager.BuildPage(host)
   empty:SetText("No saved notes for this boss.\nAdd one in the Import/Export tab.")
   empty:Hide()
 
-  -- bottom: jump to import + share
-  local importBtn = CreateFrame("Button", nil, host, "UIPanelButtonTemplate")
-  importBtn:SetSize(120, 22)
-  importBtn:SetText("Import / Export")
-  importBtn:SetPoint("BOTTOMLEFT", 8, 12)
-  importBtn:SetScript("OnClick", ns.wrap(function() ns.Window.Open("import") end))
+  -- (no bottom Import/Export button — the left nav already has an Import tab)
 
   ensureGrpSelection()
   ensureBossSelection()

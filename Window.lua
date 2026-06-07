@@ -146,12 +146,37 @@ local function build()
   grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
   grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
   grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
-  grip:SetScript("OnMouseDown", ns.wrap(function() f:StartSizing("BOTTOMRIGHT") end))
-  grip:SetScript("OnMouseUp", ns.wrap(function()
+  -- Only start sizing after the cursor actually moves a few px. Otherwise a plain
+  -- click made StartSizing snap the corner to the cursor (grip sits inset from the
+  -- corner), shrinking the window on a mere click.
+  local gripSizing = false
+  grip:SetScript("OnMouseDown", ns.wrap(function(self)
+    gripSizing = false
+    local sx, sy = GetCursorPosition()
+    self:SetScript("OnUpdate", ns.wrap(function()
+      local cx, cy = GetCursorPosition()
+      if (not gripSizing) and (math.abs(cx - sx) + math.abs(cy - sy)) > 4 then
+        gripSizing = true
+        f:StartSizing("BOTTOMRIGHT")
+      end
+    end))
+  end))
+  grip:SetScript("OnMouseUp", ns.wrap(function(self)
+    self:SetScript("OnUpdate", nil)
+    if gripSizing then
+      f:StopMovingOrSizing()
+      local oo = ns.DB and ns.DB.Options and ns.DB.Options()
+      if oo then oo.windowW = math.floor(f:GetWidth() + 0.5); oo.windowH = math.floor(f:GetHeight() + 0.5) end
+      if current and current.host and current.host._onResize then ns.safecall(current.host._onResize, current.host) end
+    end
+    gripSizing = false
+  end))
+  -- safety: if the window hides mid-drag (Esc/close), release sizing so it can't
+  -- keep following the cursor after a missed mouse-up.
+  f:SetScript("OnHide", ns.wrap(function()
+    grip:SetScript("OnUpdate", nil)
+    gripSizing = false
     f:StopMovingOrSizing()
-    local oo = ns.DB and ns.DB.Options and ns.DB.Options()
-    if oo then oo.windowW = math.floor(f:GetWidth() + 0.5); oo.windowH = math.floor(f:GetHeight() + 0.5) end
-    if current and current.host and current.host._onResize then ns.safecall(current.host._onResize, current.host) end
   end))
   if ns.Style then
     ns.Style.Panel(f, 0.98)
@@ -195,7 +220,7 @@ local function build()
   -- left sidebar
   sidebar = CreateFrame("Frame", nil, f, "BackdropTemplate")
   sidebar:SetPoint("TOPLEFT", 12, -44)
-  sidebar:SetPoint("BOTTOMLEFT", 12, 14)
+  sidebar:SetPoint("BOTTOMLEFT", 12, 38)
   sidebar:SetWidth(NAV_W)
   if ns.Style then
     ns.Style.InsetPanel(sidebar, 0.85)
@@ -211,7 +236,40 @@ local function build()
   -- right content host (each page attaches its widgets here)
   contentArea = CreateFrame("Frame", "CoolPlanWindowContent", f)
   contentArea:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 10, 0)
-  contentArea:SetPoint("BOTTOMRIGHT", -14, 14)
+  contentArea:SetPoint("BOTTOMRIGHT", -14, 38)
+  -- bordered panel (like the sidebar) so the content area reads as a distinct
+  -- region and the footer below it is clearly separated.
+  if ns.Style and ns.Style.InsetPanel then ns.Style.InsetPanel(contentArea, 0.85) end
+
+  -- footer: version + selectable (drag-to-copy) site / discord links.
+  local verStr = (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata("CoolPlan", "Version")) or "?"
+  local foot = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  foot:SetPoint("BOTTOMLEFT", 16, 16)
+  foot:SetText("v" .. verStr)
+
+  -- a label + bordered read-only EditBox so the URL can be selected (drag) and
+  -- copied (Ctrl+C), with a subtle border like NSRT's footer links.
+  local function labeledLink(anchor, label, url, boxW)
+    local lbl = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    lbl:SetPoint("LEFT", anchor, "RIGHT", 16, 0)
+    lbl:SetText("|cffaaaaaa" .. label .. "|r")
+    local b = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    b:SetFontObject(GameFontDisableSmall)
+    b:SetAutoFocus(false)
+    b:SetSize(boxW, 16)
+    b:SetPoint("LEFT", lbl, "RIGHT", 8, 0)
+    b:SetText(url)
+    b:EnableMouse(true)
+    b:SetScript("OnEscapePressed", ns.wrap(function(s) s:ClearFocus() end))
+    b:SetScript("OnEditFocusGained", ns.wrap(function(s) s:HighlightText() end))
+    b:SetScript("OnEditFocusLost", ns.wrap(function(s) s:HighlightText(0, 0); s:SetCursorPosition(0) end))
+    -- read-only: revert any typed change so it stays copy-only
+    b:SetScript("OnChar", ns.wrap(function(s) s:SetText(url); s:HighlightText() end))
+    b:SetScript("OnTextChanged", ns.wrap(function(s, user) if user then s:SetText(url); s:HighlightText() end end))
+    return b
+  end
+  local siteBox = labeledLink(foot, "Planner", "https://coolplan.team", 150)
+  labeledLink(siteBox, "Discord", "https://discord.gg/CZ3PjZhkVU", 185)
 
   return f
 end
@@ -222,7 +280,10 @@ local function ensurePage(page)
   -- a per-page host frame parented to the shared content area; all the page's
   -- widgets live under it so we can show/hide an entire page at once.
   local host = CreateFrame("Frame", nil, contentArea)
-  host:SetAllPoints(contentArea)
+  -- inset inside contentArea's border so page widgets (dropdowns, etc.) sit
+  -- within the bordered panel instead of spilling over its edge.
+  host:SetPoint("TOPLEFT", contentArea, "TOPLEFT", 6, -6)
+  host:SetPoint("BOTTOMRIGHT", contentArea, "BOTTOMRIGHT", -6, 6)
   host:Hide()
   page.host = host
   if page.builder then ns.safecall(page.builder, host) end
@@ -253,7 +314,7 @@ function Window.Open(pageKey)
   host:Show()
   current = page
   highlightNav(page.key)
-  frame.title:SetText("|cff66b3ffCoolPlan|r  |cffaaaaaa—  " .. page.label .. "|r")
+  frame.title:SetText("|cff66b3ffCoolPlan|r  |cffaaaaaa-  " .. page.label .. "|r")
 
   local o = ns.DB and ns.DB.Options and ns.DB.Options()
   if o then o.lastPage = page.key end
@@ -342,22 +403,46 @@ end
 -- (same look as the sound picker). `getItems()` returns { {text=, value=}, ... };
 -- `onSelect(value, text)` fires after a pick. Keeps the old API: dd:SetValue,
 -- dd:SetPoint, dd:SetEnabled.
+-- Make any select-style button (MakeDropdown, or a button that opens a picker
+-- like the sound cue) read as a dropdown: left-justified clipped label + a thin,
+-- dim down-chevron on the right. A texture/atlas (never a unicode glyph) keeps it
+-- font-safe. Shared so every select looks the same.
+function Window.AddSelectArrow(btn)
+  local fs = btn.GetFontString and btn:GetFontString()
+  if fs then
+    fs:ClearAllPoints()
+    fs:SetPoint("LEFT", 8, 0)
+    fs:SetPoint("RIGHT", -20, 0) -- room for the chevron
+    fs:SetJustifyH("LEFT")
+    if fs.SetWordWrap then fs:SetWordWrap(false) end
+  end
+  local arrow = btn:CreateTexture(nil, "OVERLAY")
+  arrow:SetSize(12, 12)
+  arrow:SetPoint("RIGHT", -7, 0)
+  -- check the atlas exists first (no pcall/closure churn); SetAtlas on a known
+  -- atlas can't error. Fall back to a texture if neither atlas is present.
+  local set = false
+  if arrow.SetAtlas and C_Texture and C_Texture.GetAtlasInfo then
+    for _, a in ipairs({ "uitools-icon-chevron-down", "common-dropdown-icon" }) do
+      if C_Texture.GetAtlasInfo(a) then arrow:SetAtlas(a); set = true; break end
+    end
+  end
+  if not set then
+    arrow:SetTexture("Interface\\Buttons\\Arrow-Down-Up")
+  end
+  arrow:SetVertexColor(0.55, 0.55, 0.55)
+  btn.arrow = arrow
+  return arrow
+end
+
 function Window.MakeDropdown(parent, name, width, getItems, onSelect)
   width = width or 160
   local dd = CreateFrame("Button", name, parent, "UIPanelButtonTemplate")
   dd:SetSize(width, 22)
   dd._value = nil
 
-  -- left-justified label; long values (e.g. TTS voice names) clip to the button
-  -- width instead of wrapping/overflowing (the full name shows inside the picker)
-  local fs = dd.GetFontString and dd:GetFontString()
-  if fs then
-    fs:ClearAllPoints()
-    fs:SetPoint("LEFT", 8, 0)
-    fs:SetPoint("RIGHT", -8, 0)
-    fs:SetJustifyH("LEFT")
-    if fs.SetWordWrap then fs:SetWordWrap(false) end
-  end
+  -- left-justified clipped label + dropdown chevron (shared helper)
+  Window.AddSelectArrow(dd)
 
   -- programmatically set value + display text without firing onSelect
   function dd:SetValue(value, text)

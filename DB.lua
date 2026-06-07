@@ -85,6 +85,44 @@ function DB.Init()
     CoolPlanDB.library = nil
     CoolPlanDB._libToChar = true
   end
+
+  -- Normalize the library so downstream code (Timeline / Scheduler / Manager)
+  -- only ever sees clean data — even from hand-edited or legacy SavedVariables.
+  -- Each encounter gets plans{}/numeric active; each plan gets reminders{}; and
+  -- any reminder/boss row with a non-numeric timeMs or spellId is dropped (those
+  -- would otherwise cause "compare nil with number" / "#nil" / nil-arithmetic).
+  for _, e in pairs(CoolPlanCharDB.library) do
+    if type(e) == "table" then
+      if type(e.plans) ~= "table" then e.plans = {} end
+      if type(e.active) ~= "number" then e.active = 0 end
+      -- iterate plans in reverse so a non-table plan element (e.g. hand-edited
+      -- plans = { 123 }) can be dropped instead of crashing on p.reminders.
+      for pi = #e.plans, 1, -1 do
+        local p = e.plans[pi]
+        if type(p) ~= "table" then
+          table.remove(e.plans, pi)
+        else
+          if type(p.reminders) ~= "table" then p.reminders = {} end
+          for i = #p.reminders, 1, -1 do
+            local r = p.reminders[i]
+            if type(r) ~= "table" or type(r.timeMs) ~= "number" or type(r.spellId) ~= "number" then
+              table.remove(p.reminders, i)
+            end
+          end
+          if type(p.boss) == "table" then
+            for i = #p.boss, 1, -1 do
+              local b = p.boss[i]
+              if type(b) ~= "table" or type(b.timeMs) ~= "number" or type(b.spellId) ~= "number" then
+                table.remove(p.boss, i)
+              end
+            end
+          end
+        end
+      end
+      if e.active > #e.plans then e.active = #e.plans end
+    end
+  end
+
   -- One-time: derive the new single alert mode from the OLD soundEnabled/
   -- ttsEnabled checkboxes (run BEFORE deepFill so we read the user's old values,
   -- not freshly-filled defaults). TTS wins, then explicit sound-off → none.
@@ -274,6 +312,14 @@ function DB.DeletePlan(id, index)
   -- (none) — the user may have intentionally disarmed the encounter.
   if e.active > #e.plans then e.active = #e.plans end
   pruneIfEmpty(id, e)
+end
+
+-- Delete an entire encounter (all its plans + boss timeline) in one go.
+-- Returns true if an entry was actually removed.
+function DB.DeleteEncounter(id)
+  if id == nil or CoolPlanCharDB.library[id] == nil then return false end
+  CoolPlanCharDB.library[id] = nil
+  return true
 end
 
 -- Build a serializable { [id] = { name, reminders, boss } } from the library.

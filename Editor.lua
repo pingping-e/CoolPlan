@@ -24,7 +24,7 @@ function Editor.BuildPage(host)
   help:SetPoint("TOPLEFT", 8, -8)
   help:SetPoint("TOPRIGHT", -8, -8)
   help:SetJustifyH("LEFT")
-  help:SetText("Paste a plan from coolplan.team, optionally name it, and Load to ADD it to that boss's saved list (existing plans are kept). You can edit times / spell IDs directly. Export All dumps each boss's active plan.")
+  help:SetText("Paste a plan from coolplan.team and Load to add it (name optional, edits allowed). Export All copies your active plans.")
 
   local sf = CreateFrame("ScrollFrame", "CoolPlanEditorScroll", host, "UIPanelScrollFrameTemplate")
   sf:SetPoint("TOPLEFT", 8, -46)
@@ -32,7 +32,12 @@ function Editor.BuildPage(host)
 
   local eb = CreateFrame("EditBox", "CoolPlanEditorBox", sf)
   eb:SetMultiLine(true)
-  eb:SetFontObject(ChatFontNormal)
+  -- Use the SAME FontObject the picker/timeline use (GameFontHighlightSmall):
+  -- a FontObject carries the client's glyph FALLBACK chain, so characters missing
+  -- from the primary .ttf (e.g. simplified-Chinese on a KR client) fall back to a
+  -- secondary font and render. SetFont(path,...) does NOT keep that fallback, so
+  -- the same 2002.TTF showed boxes in the EditBox while the picker rendered fine.
+  eb:SetFontObject(GameFontHighlightSmall)
   eb:SetAutoFocus(false)
   eb:EnableMouse(true)
   -- The box IS the editor: make the EditBox fill the scroll viewport (so the
@@ -105,15 +110,14 @@ function Editor.BuildPage(host)
       host.status:SetText("|cffff5555" .. (err or "parse error") .. "|r")
       return
     end
-    -- count encounters so a typed name only applies to a single-encounter import
-    local nEnc = 0
-    for _ in pairs(plans) do nEnc = nEnc + 1 end
     local typed = host.nameBox:GetText()
     if typed == "" then typed = nil end
 
     local added, nRem, nBoss = 0, 0, 0
     for id, parsed in pairs(plans) do
-      local label = (nEnc == 1) and typed or nil
+      -- a typed name applies to every imported encounter (so a whole-dungeon
+      -- import can be named once, e.g. "raid night"); nil falls back to "Plan N".
+      local label = typed
       nRem = nRem + (parsed.reminders and #parsed.reminders or 0)
       nBoss = nBoss + (parsed.boss and #parsed.boss or 0)
       -- boss abilities ride along on the same plan (one body)

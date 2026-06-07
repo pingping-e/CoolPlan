@@ -11,7 +11,7 @@ ns.Timeline = Timeline
 
 local PX_PER_SEC = 36          -- horizontal scale
 local ROW_H = 26               -- per-player row height
-local LABEL_W = 96             -- left gutter for player/track names
+local LABEL_W = 120            -- left gutter for player/track names (room for long names)
 local BOSS_ROW_H = 26
 local ICON = 20
 
@@ -285,6 +285,10 @@ local function renderCanvas()
 
   local h = math.abs(y) + 8
   canvas:SetHeight(math.max(h, 60))
+  -- size the viewport to the track content (capped to available height) so the
+  -- horizontal scrollbar ends up just under the last track, not at the page foot.
+  local avail = ((scroll:GetParent() and scroll:GetParent():GetHeight()) or 520) - 150
+  scroll:SetHeight(math.max(80, math.min(canvas:GetHeight(), avail)))
   canvas._totalSec = totalSec
   canvas._height = math.abs(gridBottom) + 4
   canvas._gridTop = gridTop
@@ -488,7 +492,7 @@ function Timeline.BuildPage(host)
 
   local hint = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   hint:SetPoint("TOPLEFT", 8, -6)
-  hint:SetText("Pick a dungeon / boss / note to preview. Test = playback (Shift+click 3x).  Scroll = zoom · Shift+scroll = pan · hover = time")
+  hint:SetText("Pick a dungeon / boss / note to preview. Test = playback (Shift+click 3x).  Scroll = zoom, Shift+scroll = pan, hover = time")
 
   -- row 1: category + dungeon/instance
   catDD = ns.Window.MakeDropdown(host, "CoolPlanTLCatDD", 100,
@@ -509,7 +513,7 @@ function Timeline.BuildPage(host)
       refreshNoteDD()
       renderCanvas()
     end)
-  catDD:SetPoint("TOPLEFT", -8, -24)
+  catDD:SetPoint("TOPLEFT", 4, -24)
   do
     local cat = ns.Window.CategoryByKey(selCat) or ns.Window.Categories()[1]
     if cat then selCat = cat.key; catDD:SetValue(cat.key, cat.label) end
@@ -562,9 +566,9 @@ function Timeline.BuildPage(host)
       refreshNoteDD()
       renderCanvas()
     end)
-  bossDD:SetPoint("TOPLEFT", -8, -54)
+  bossDD:SetPoint("TOPLEFT", 4, -54)
 
-  noteDD = ns.Window.MakeDropdown(host, "CoolPlanTLNoteDD", 140, noteItems,
+  noteDD = ns.Window.MakeDropdown(host, "CoolPlanTLNoteDD", 180, noteItems,
     function(idx)
       selNote = idx
       refreshPreviewDD()
@@ -599,10 +603,16 @@ function Timeline.BuildPage(host)
   status = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   status:SetPoint("TOPLEFT", 8, -84)
 
-  -- scrollable canvas (leave room at the bottom for the horizontal scrollbar)
+  -- scrollable canvas. Width is anchored; HEIGHT is set per-render to the track
+  -- content so the horizontal scrollbar sits just under the last track.
   scroll = CreateFrame("ScrollFrame", "CoolPlanTimelineScroll", host, "UIPanelScrollFrameTemplate")
   scroll:SetPoint("TOPLEFT", 8, -102)
-  scroll:SetPoint("BOTTOMRIGHT", -28, 30)
+  scroll:SetPoint("TOPRIGHT", -8, -102) -- width only (no vertical scrollbar gutter)
+  scroll:SetHeight(120)                 -- placeholder; render() sizes to tracks
+  -- no vertical scrollbar: a boss track + up to 5 players never overflow down.
+  -- modern templates expose scroll.ScrollBar; older ones use the global name.
+  local vbar = scroll.ScrollBar or _G["CoolPlanTimelineScrollScrollBar"]
+  if vbar then vbar:Hide(); vbar:SetScript("OnShow", vbar.Hide) end
 
   canvas = CreateFrame("Frame", "CoolPlanTimelineCanvas", scroll)
   canvas:SetSize(600, 60)
@@ -612,8 +622,10 @@ function Timeline.BuildPage(host)
   hbar = CreateFrame("Slider", "CoolPlanTimelineHBar", host, "OptionsSliderTemplate")
   hbar:SetOrientation("HORIZONTAL")
   hbar:SetHeight(16)
-  hbar:SetPoint("BOTTOMLEFT", 12, 6)
-  hbar:SetPoint("BOTTOMRIGHT", -28, 6)
+  -- sit the scrollbar just under the timeline canvas (slightly below, not flush)
+  -- for readability, instead of pinned to the very bottom of the page.
+  hbar:SetPoint("TOPLEFT", scroll, "BOTTOMLEFT", 4, -4)
+  hbar:SetPoint("TOPRIGHT", scroll, "BOTTOMRIGHT", 0, -4)
   hbar:SetMinMaxValues(0, 0)
   hbar:SetValue(0)
   hbar:SetValueStep(1)

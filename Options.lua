@@ -223,18 +223,8 @@ function Options.BuildPage(host)
   sndBtn:SetSize(200, 22)
   sndBtn:SetPoint("TOPLEFT", LX - 8, -168)
   sndBtn:SetText(soundName(o.soundKit))
-  do
-    -- match the MakeDropdown picker buttons: left-justified label, clipped (not
-    -- wrapped) so long sound names don't overflow
-    local f = sndBtn:GetFontString()
-    if f then
-      f:ClearAllPoints()
-      f:SetPoint("LEFT", 8, 0)
-      f:SetPoint("RIGHT", -8, 0)
-      f:SetJustifyH("LEFT")
-      if f.SetWordWrap then f:SetWordWrap(false) end
-    end
-  end
+  -- match MakeDropdown selects: clipped left label + dropdown chevron
+  if ns.Window and ns.Window.AddSelectArrow then ns.Window.AddSelectArrow(sndBtn) end
   sndBtn:SetScript("OnClick", ns.wrap(function()
     if ns.SoundPicker.IsShown() then ns.SoundPicker.Hide(); return end
     ns.SoundPicker.Show(sndBtn, o.soundKit, function(value)

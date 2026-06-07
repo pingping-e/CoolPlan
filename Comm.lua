@@ -26,6 +26,13 @@ ns.Comm = Comm
 local PREFIX = "CoolPlan"
 Comm.PREFIX = PREFIX
 
+-- Plans are large, repetitive text (16 KB+ for a whole dungeon). Compressing
+-- with DEFLATE before chunking shrinks that ~8x, which keeps a transfer under
+-- the client's addon-message burst quota (~25 messages) so it rarely throttles.
+-- EncodeForWoWAddonChannel also makes the bytes channel-safe (handles newlines/
+-- nulls), so no separate newline escaping is needed on the wire.
+local LibDeflate = LibStub and LibStub("LibDeflate", true)
+
 -- One addon message is <=255 bytes INCLUDING the "CoolPlan" prefix (8) + a
 -- separator the server inserts (1). Our header "transferId|seq|total|" is up to
 -- ~40 bytes (transferId ~28: a 12-char name + '-' + ms + '-' + counter, plus
@@ -33,6 +40,18 @@ Comm.PREFIX = PREFIX
 -- margin to spare.
 local CHUNK_BYTES   = 200
 local SEND_INTERVAL = 0.15          -- seconds between chunks (rate-limit safe)
+-- Retry cap for a TEMPORARY throttle (~9s at 0.15s/tick). Normal throttle clears
+-- in 1-2s, well under this; permanent failures (left group) abort immediately
+-- via the result code, so this only bounds a stuck-throttle edge case.
+local MAX_SEND_RETRIES = 60
+
+-- The serialized plan is a multi-LINE string (Format joins rows with '\n').
+-- SendAddonMessage silently truncates a body at the first '\n' (or refuses to
+-- send it), so a raw plan never reassembles on the receiver and the accept
+-- popup never appears. Encode newlines to a control byte (0x1E, never produced
+-- by sanitize()) for transport and restore them after reassembly. This is the
+-- reason party-share never worked before — see OnReceived for the reverse.
+local NL_SENTINEL = "\30"
 
 -- Abuse guards (a hostile/oversized sender must not be able to grow memory).
 local MAX_CHUNKS      = 400          -- ~80 KB max per transfer (200 * 400)
@@ -44,15 +63,24 @@ local MAX_LIVE_TRANSFERS = 8         -- simultaneous in-flight inbound transfers
 local sendQueue = {}                 -- list of pending chunk bodies
 local sendTicker = nil
 local idCounter = 0
+local sendRetries = 0                -- consecutive failed sends of the head chunk
+
+local INSTANCE_CAT = LE_PARTY_CATEGORY_INSTANCE or 2
 
 local function inParty()
-  -- works solo? no. We want a real party (5-man) or raid.
-  if IsInGroup and IsInGroup() then return true end
+  -- works solo? no. We want a real party (5-man) or raid. Check BOTH the home
+  -- group and the instance group (M+/LFG): inside a dungeon the party is an
+  -- instance group, where IsInGroup() with no category can read false.
   if IsInRaid and IsInRaid() then return true end
+  if IsInGroup and (IsInGroup() or IsInGroup(INSTANCE_CAT)) then return true end
   return false
 end
 
 local function channel()
+  -- Inside an instance group (M+ dungeon / LFG / LFR), party & raid chat are
+  -- routed through INSTANCE_CHAT; addon messages sent to "PARTY"/"RAID" there
+  -- are silently dropped. This is a Mythic+ addon, so that's the common case.
+  if IsInGroup and IsInGroup(INSTANCE_CAT) then return "INSTANCE_CHAT" end
   if IsInRaid and IsInRaid() then return "RAID" end
   return "PARTY"
 end
@@ -84,12 +112,42 @@ end
 local function pumpSendQueue()
   if #sendQueue == 0 then
     if sendTicker then sendTicker:Cancel(); sendTicker = nil end
+    sendRetries = 0
     return
   end
-  local body = table.remove(sendQueue, 1)
-  if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-    C_ChatInfo.SendAddonMessage(PREFIX, body, channel())
+  -- Peek (don't pop yet): SendAddonMessage can be throttled by the client
+  -- (Enum.SendAddonMessageResult.AddonMessageThrottle == 3), which silently
+  -- drops the message. Only remove the chunk from the queue once the client
+  -- accepted it; otherwise leave it to be retried on the next tick. Dropping
+  -- throttled chunks here is what made large transfers lose their tail and
+  -- never reassemble on the receiver.
+  local body = sendQueue[1]
+  if not (C_ChatInfo and C_ChatInfo.SendAddonMessage) then
+    table.remove(sendQueue, 1) -- no API: nothing we can do, drop it
+    return
   end
+  local ret = C_ChatInfo.SendAddonMessage(PREFIX, body, channel())
+  local R = Enum and Enum.SendAddonMessageResult
+  local SUCCESS  = (R and R.Success) or 0
+  local THROTTLE = (R and R.AddonMessageThrottle) or 3
+  local accepted = (ret == nil) or (ret == true) or (ret == SUCCESS)
+  if accepted then
+    table.remove(sendQueue, 1)
+    sendRetries = 0
+    return
+  end
+  -- A throttle (or an unknown non-numeric result on old clients) is TEMPORARY:
+  -- keep the chunk and retry next tick, capped so it can't spin forever.
+  if ret == THROTTLE or type(ret) ~= "number" then
+    sendRetries = sendRetries + 1
+    if sendRetries < MAX_SEND_RETRIES then return end
+  end
+  -- Permanent failure (left the group / bad channel), or throttle that never
+  -- cleared within the cap: stop now instead of retrying forever.
+  wipe(sendQueue)
+  sendRetries = 0
+  if sendTicker then sendTicker:Cancel(); sendTicker = nil end
+  ns.Print("|cffff6666CoolPlan: couldn't finish sharing (left group or network issue). Try again.|r")
 end
 
 local function startPump()
@@ -103,6 +161,15 @@ end
 
 -- Enqueue a serialized string as a chunked transfer over the group channel.
 local function broadcast(str)
+  local c = LibDeflate and LibDeflate:CompressDeflate(str, { level = 9 })
+  local enc = c and LibDeflate:EncodeForWoWAddonChannel(c)
+  if enc then
+    str = enc
+  else
+    -- no LibDeflate (or it returned nothing): fall back to plain newline-escaping
+    -- so SendAddonMessage doesn't truncate at '\n'.
+    str = (str:gsub("\n", NL_SENTINEL))
+  end
   local chunks = chunkString(str)
   local total = #chunks
   if total > MAX_CHUNKS then
@@ -155,7 +222,7 @@ function Comm.ShareEncounter(id, index)
   local str = ns.Format.Serialize(payload, { source = "share" })
   local ok, total = broadcast(str)
   if ok then
-    ns.Print(("sharing %s to %s (%d chunk%s)…"):format(
+    ns.Print(("sending %s to %s (%d chunk%s)…"):format(
       lib[id].name or ("encounter " .. id), channel():lower(), total, total == 1 and "" or "s"))
   end
 end
@@ -184,7 +251,7 @@ function Comm.ShareEncounters(ids)
   local str = ns.Format.Serialize(payload, { source = "share" })
   local ok, total = broadcast(str)
   if ok then
-    ns.Print(("sharing %d boss plan(s) to %s (%d chunk%s)…"):format(
+    ns.Print(("sending %d boss plan(s) to %s (%d chunk%s)…"):format(
       nEnc, channel():lower(), total, total == 1 and "" or "s"))
   end
 end
@@ -269,9 +336,33 @@ local function handleChunk(sender, body)
   end
 end
 
+-- Throttle the "can't read / version mismatch" warning so a malformed or
+-- cross-version sender can't spam the chat (one line per 5s at most).
+local lastUnreadWarn = 0
+
 -- Parse the reassembled plan and present an accept prompt.
 function Comm.OnReceived(sender, str)
-  local plans, _, err = ns.Format.Parse(str)
+  if LibDeflate then
+    -- reverse of broadcast(): channel-decode then DEFLATE-decompress.
+    local decoded = LibDeflate:DecodeForWoWAddonChannel(str)
+    local raw = decoded and LibDeflate:DecompressDeflate(decoded)
+    if not raw then
+      -- Couldn't decompress: sender is on a different (older/newer) CoolPlan whose
+      -- wire format we can't read. Warn at most once per 5s so a malformed/hostile
+      -- or cross-version sender can't spam the chat with red errors.
+      local now = (GetTime and GetTime()) or 0
+      if now - lastUnreadWarn > 5 then
+        lastUnreadWarn = now
+        ns.Print("|cffff6666CoolPlan: got a plan we can't read. You and the sender need the same CoolPlan version — please update.|r")
+      end
+      return
+    end
+    str = raw
+  else
+    -- fallback path (older sender): undo newline escaping.
+    str = (str:gsub(NL_SENTINEL, "\n"))
+  end
+  local plans = ns.Format.Parse(str)
   if not plans then
     -- silent on parse failure: could be a malformed / hostile payload.
     return
@@ -300,8 +391,11 @@ end
 -- Apply an accepted transfer: add each encounter's plan to the library.
 local function applyPlans(sender, plans)
   local added, bossOnly = 0, 0
+  -- drop the realm so a cross-realm "Name-Realm" sender saves as just "Name".
+  local who = (Ambiguate and Ambiguate(tostring(sender), "short"))
+    or tostring(sender):match("^[^%-]+") or tostring(sender)
   for id, parsed in pairs(plans) do
-    local label = "Shared from " .. tostring(sender)
+    local label = "Sent by " .. who
     local idx = ns.DB.AddPlan(id, parsed.name, label, parsed.reminders, parsed.boss)
     if idx == 0 then bossOnly = bossOnly + 1 else added = added + 1 end
   end
@@ -393,15 +487,13 @@ function Comm.PromptAccept(sender, bossName, plans)
     lines[#lines + 1] = ""
     local e1 = enc[1]
     if e1 then
-      lines[#lines + 1] = ("|cff88ccff%s|r |cff888888(%d cd%s)|r"):format(
-        e1.name, e1.cd, e1.hasBoss and ", +boss timeline" or "")
+      lines[#lines + 1] = ("|cff88ccff%s|r |cff888888(%d cd)|r"):format(e1.name, e1.cd)
     end
   else
-    lines[#lines + 1] = ("|cffffd200%s|r shared a dungeon plan \226\128\148 %d bosses:"):format(tostring(sender), nEnc)
+    lines[#lines + 1] = ("|cffffd200%s|r shared a dungeon plan - %d bosses:"):format(tostring(sender), nEnc)
     lines[#lines + 1] = ""
     for _, e1 in ipairs(enc) do
-      lines[#lines + 1] = ("|cff88ccff%s|r |cff888888(%d cd%s)|r"):format(
-        e1.name, e1.cd, e1.hasBoss and ", +tl" or "")
+      lines[#lines + 1] = ("|cff88ccff%s|r |cff888888(%d cd)|r"):format(e1.name, e1.cd)
     end
   end
   lines[#lines + 1] = ""
@@ -415,6 +507,86 @@ function Comm.PromptAccept(sender, bossName, plans)
   prompt:Show()
 end
 
+-- ── version handshake ───────────────────────────────────────────────────────
+-- Announce our addon version to group/guild; if a peer (or a version we saw
+-- before, persisted) is newer, tell the user ONCE that they're out of date.
+-- Everything here is best-effort + nil-guarded — a failure must never break the
+-- rest of the addon (all callers are ns.wrap'd at the event layer).
+local VER_TAG = "CPVER:"
+local outdatedNotified = false
+
+local function myVersion()
+  local v = (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata("CoolPlan", "Version"))
+    or (GetAddOnMetadata and GetAddOnMetadata("CoolPlan", "Version"))
+  return v or "0.0.0"
+end
+
+local function parseVer(s)
+  local a, b, c = tostring(s or ""):match("(%d+)%.(%d+)%.(%d+)")
+  return tonumber(a) or 0, tonumber(b) or 0, tonumber(c) or 0
+end
+
+-- is version `a` strictly older than `b`?
+local function verLess(a, b)
+  local a1, a2, a3 = parseVer(a)
+  local b1, b2, b3 = parseVer(b)
+  if a1 ~= b1 then return a1 < b1 end
+  if a2 ~= b2 then return a2 < b2 end
+  return a3 < b3
+end
+Comm._verLess = verLess -- exposed for tests
+
+-- Highest version seen from peers THIS SESSION only. NOT persisted: a forged or
+-- one-off bogus ping (e.g. someone sending "99.0.0") must not stick in
+-- SavedVariables and produce a permanent, unfixable "out of date" nag every login.
+local seenMaxVer = nil
+
+local function notifyOutdated(latest)
+  if outdatedNotified then return end
+  outdatedNotified = true
+  ns.Print(("|cffff9900CoolPlan is out of date - you have %s, latest seen is %s. Please update.|r")
+    :format(myVersion(), tostring(latest)))
+end
+
+-- Inbound version ping: track the highest seen THIS SESSION, warn once if behind.
+local function onVersionPing(other)
+  if type(other) ~= "string" or other == "" then return end
+  if not other:match("^%d+%.%d+%.%d+") then return end -- ignore garbage
+  if (not seenMaxVer) or verLess(seenMaxVer, other) then seenMaxVer = other end
+  if verLess(myVersion(), other) then notifyOutdated(other) end
+end
+
+-- Send our version to the channels we're in (group + guild).
+local guildPinged = false
+function Comm.BroadcastVersion()
+  if not (C_ChatInfo and C_ChatInfo.SendAddonMessage) then return end
+  local msg = VER_TAG .. myVersion()
+  local ch
+  if IsInGroup and IsInGroup(INSTANCE_CAT) then ch = "INSTANCE_CHAT"
+  elseif IsInRaid and IsInRaid() then ch = "RAID"
+  elseif IsInGroup and IsInGroup() then ch = "PARTY" end
+  if ch then C_ChatInfo.SendAddonMessage(PREFIX, msg, ch) end
+  -- guild: once per session only. Roster churn (group invites/leaves) shouldn't
+  -- re-ping the guild channel every time; peers announce themselves too.
+  if not guildPinged and IsInGuild and IsInGuild() then
+    guildPinged = true
+    C_ChatInfo.SendAddonMessage(PREFIX, msg, "GUILD")
+  end
+end
+
+-- Debounce roster churn so joining a group doesn't spam version pings.
+local verBcastPending = false
+local function scheduleVersionBroadcast()
+  if verBcastPending then return end
+  verBcastPending = true
+  if C_Timer and C_Timer.After then
+    C_Timer.After(3, ns.wrap(function() verBcastPending = false; Comm.BroadcastVersion() end))
+  else
+    verBcastPending = false
+    Comm.BroadcastVersion()
+  end
+end
+
 -- ── event wiring ─────────────────────────────────────────────────────────────
 local listener
 function Comm.Init()
@@ -424,7 +596,12 @@ function Comm.Init()
   if listener then return end
   listener = CreateFrame("Frame")
   listener:RegisterEvent("CHAT_MSG_ADDON")
+  listener:RegisterEvent("GROUP_ROSTER_UPDATE")
   listener:SetScript("OnEvent", ns.wrap(function(_, event, ...)
+    if event == "GROUP_ROSTER_UPDATE" then
+      scheduleVersionBroadcast()
+      return
+    end
     if event ~= "CHAT_MSG_ADDON" then return end
     local prefix, message, _, sender = ...
     if prefix ~= PREFIX then return end
@@ -433,8 +610,16 @@ function Comm.Init()
     local me = (UnitName and UnitName("player")) or ""
     local short = tostring(sender):match("^([^%-]+)") or sender
     if short == me or sender == me then return end
+    -- version ping is a tiny tagged message, not a chunked transfer.
+    if message:sub(1, #VER_TAG) == VER_TAG then
+      onVersionPing(message:sub(#VER_TAG + 1))
+      return
+    end
     handleChunk(sender, message)
   end))
+  -- on login: announce our version. Peers reply via onVersionPing, which warns
+  -- once if we're behind. No persisted "seen version", so no stale/forged nag.
+  scheduleVersionBroadcast()
 end
 
 -- exposed for tests

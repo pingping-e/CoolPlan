@@ -138,7 +138,9 @@ local function ensurePopup()
     if popup.catcher then popup.catcher:Hide() end
   end))
   -- Esc closes even when the search box isn't focused.
-  if UISpecialFrames then tinsert(UISpecialFrames, "CoolPlanPicker") end
+  if UISpecialFrames and not tContains(UISpecialFrames, "CoolPlanPicker") then
+    tinsert(UISpecialFrames, "CoolPlanPicker")
+  end
   if ns.Style and ns.Style.Apply then ns.Style.Apply(popup) end
   popup:Hide()
   return popup
