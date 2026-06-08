@@ -71,6 +71,11 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
   elseif cmd == "dumptree" then
     -- DEV/PoC: dump the canonical talent node order + serialization version +
     -- per-node state, so the website can build a Blizzard import-string encoder.
+    -- Dev-gated: enable with /coolplan debug first (not for normal users).
+    if not ns.debug then
+      out("dev-only command. run /coolplan debug first to enable.")
+      return
+    end
     if not (C_ClassTalents and C_Traits and C_ClassTalents.GetActiveConfigID) then
       out("talent API unavailable."); return
     end
