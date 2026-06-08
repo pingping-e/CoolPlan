@@ -1,7 +1,8 @@
 -- Import / Export page. The human-readable format means the multiline box IS
 -- the editor: paste a plan from coolplan.team, optionally name it, and Load to
--- ADD it to that encounter's saved list (existing plans are kept). Export All
--- dumps each encounter's active plan back out.
+-- ADD it to that encounter's saved list (existing plans are kept). The only
+-- export here is "Export current character" (gear/talents → website compare);
+-- plan export/share lives in the Manager (per-plan Export + Send).
 -- Embedded into the Window shell via Editor.BuildPage(host).
 
 local _, ns = ...
@@ -24,7 +25,7 @@ function Editor.BuildPage(host)
   help:SetPoint("TOPLEFT", 8, -8)
   help:SetPoint("TOPRIGHT", -8, -8)
   help:SetJustifyH("LEFT")
-  help:SetText("Paste a plan from coolplan.team and Load to add it (name optional, edits allowed). Export All copies your active plans.")
+  help:SetText("Paste a plan from coolplan.team and Load to add it (name optional, edits allowed). Export current character copies your gear/talents for the website compare page.")
 
   local sf = CreateFrame("ScrollFrame", "CoolPlanEditorScroll", host, "UIPanelScrollFrameTemplate")
   sf:SetPoint("TOPLEFT", 8, -46)
@@ -149,18 +150,11 @@ function Editor.BuildPage(host)
     if ns.Timeline then ns.Timeline.Refresh() end
   end))
 
-  local exportBtn = makeButton(host, "Export All", 100)
-  exportBtn:SetPoint("RIGHT", loadBtn, "LEFT", -8, 0)
-  exportBtn:SetScript("OnClick", ns.wrap(function()
-    local str = ns.Format.Serialize(ns.DB.ToSerializable(), { source = "addon" })
-    host.editbox:SetText(str)
-    host.editbox:SetFocus()
-    host.editbox:HighlightText()
-    host.status:SetText("Exported active plans. Ctrl-C to copy.")
-  end))
-
+  -- Plan export-as-string lives in the Manager (per-plan Export) and Send; the
+  -- old "Export All" here was redundant, so it's removed. This page is Import +
+  -- the one export Send can't do: your character → coolplan.team compare.
   local clearBtn = makeButton(host, "Clear Box", 90)
-  clearBtn:SetPoint("RIGHT", exportBtn, "LEFT", -8, 0)
+  clearBtn:SetPoint("RIGHT", loadBtn, "LEFT", -8, 0)
   clearBtn:SetScript("OnClick", ns.wrap(function()
     host.editbox:SetText("")
     host.status:SetText("")
@@ -168,7 +162,7 @@ function Editor.BuildPage(host)
 
   -- Export this character's gear/talents/stats as a COOLPLAN-LOADOUT string to
   -- paste into coolplan.team's "compare me vs a top player" page.
-  local charBtn = makeButton(host, "Export my character", 150)
+  local charBtn = makeButton(host, "Export current character", 175)
   charBtn:SetPoint("LEFT", nameBox, "RIGHT", 12, 0)
   charBtn:SetScript("OnClick", ns.wrap(function()
     if ns.LoadoutExport then
