@@ -266,6 +266,13 @@ function LoadoutExport.GatherStats()
     local parry = GetCombatRating(PARRY)
     if dodge and dodge > 0 then add("Dodge", dodge) end
     if parry and parry > 0 then add("Parry", parry) end
+
+    -- Tertiary ratings (Leech / Avoidance / Speed). Use the named CR_* globals
+    -- (present on retail); emit always so they line up with WCL's stat block in
+    -- the site comparison even when 0.
+    if CR_LIFESTEAL then add("Leech", GetCombatRating(CR_LIFESTEAL)) end
+    if CR_AVOIDANCE then add("Avoidance", GetCombatRating(CR_AVOIDANCE)) end
+    if CR_SPEED then add("Speed", GetCombatRating(CR_SPEED)) end
   end
 
   -- Armor (effective armor amount).
