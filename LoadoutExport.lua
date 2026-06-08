@@ -185,13 +185,25 @@ function LoadoutExport.GatherTalents()
   local configInfo = C_Traits.GetConfigInfo(configID)
   if not configInfo or not configInfo.treeIDs then return rows end
 
+  -- The ACTIVE hero subtree. GetTreeNodes returns every hero subtree's nodes,
+  -- and unselected subtrees' nodes can still report rank > 0, so without this we
+  -- export TWO hero trees (e.g. Master of Harmony AND Conduit). Keep only the
+  -- active subtree's hero nodes; class/spec nodes have no subTreeID.
+  local activeSubTree
+  if C_ClassTalents.GetActiveHeroTalentSpec then
+    activeSubTree = C_ClassTalents.GetActiveHeroTalentSpec()
+  end
+
   local seen = {}
   for _, treeID in ipairs(configInfo.treeIDs) do
     local nodes = C_Traits.GetTreeNodes(treeID)
     for _, nodeID in ipairs(nodes or {}) do
       if not seen[nodeID] then
         local node = C_Traits.GetNodeInfo(configID, nodeID)
-        if node then
+        -- Drop hero nodes that belong to a NON-active subtree.
+        local sub = node and node.subTreeID
+        local wrongHeroTree = sub and sub > 0 and activeSubTree and sub ~= activeSubTree
+        if node and not wrongHeroTree then
           local rank = node.activeRank or node.ranksPurchased or 0
           if rank and rank > 0 then
             seen[nodeID] = true
