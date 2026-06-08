@@ -41,6 +41,10 @@ function Editor.BuildPage(host)
   eb:SetFontObject(GameFontHighlightSmall)
   eb:SetAutoFocus(false)
   eb:EnableMouse(true)
+  -- Read as a real input: pad the text off the border and make the caret blink
+  -- clearly when focused (so it's obvious you can type/paste here).
+  if eb.SetTextInsets then eb:SetTextInsets(6, 6, 6, 6) end
+  if eb.SetBlinkSpeed then eb:SetBlinkSpeed(0.5) end
   -- The box IS the editor: make the EditBox fill the scroll viewport (so the
   -- whole dark area is one clickable input surface) and grow taller as text is
   -- added. Width tracks the scroll frame; height = max(viewport, content).
@@ -79,26 +83,48 @@ function Editor.BuildPage(host)
   host._onResize = ns.wrap(function() fitEditBox(); sf:UpdateScrollChildRect() end)
   host.editbox = eb
 
+  -- Placeholder hint shown only while the box is empty & unfocused, so it's
+  -- obvious this is where you paste. Cleared the moment you focus or type.
+  local placeholder = eb:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+  placeholder:SetPoint("TOPLEFT", 7, -7)
+  placeholder:SetText("Paste a plan from coolplan.team here, or click \"Export current character\"...")
+  local function syncPlaceholder()
+    placeholder:SetShown((eb:GetText() or "") == "" and not eb:HasFocus())
+  end
+  eb:HookScript("OnTextChanged", ns.wrap(syncPlaceholder))
+  eb:HookScript("OnEditFocusGained", ns.wrap(syncPlaceholder))
+  eb:HookScript("OnEditFocusLost", ns.wrap(syncPlaceholder))
+  syncPlaceholder()
+
   local status = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   status:SetPoint("BOTTOMLEFT", 8, 50)
   status:SetPoint("BOTTOMRIGHT", -8, 50)
   status:SetJustifyH("LEFT")
   host.status = status
 
-  -- name field (bottom-left)
-  local nameLabel = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  nameLabel:SetPoint("BOTTOMLEFT", 8, 24)
-  nameLabel:SetText("Plan name:")
+  -- Bottom action row. One baseline (ROW_Y) for the name field and all three
+  -- buttons so they read as a single, aligned strip. Two logical groups:
+  --   LEFT  = the import unit: [Plan name: ___] [Load Plans]
+  --   RIGHT = the rest:        [Clear Box] [Export current character]
+  -- The empty middle is the gap between the two groups.
+  local ROW_Y = 18
+  local GAP = 10
+
+  -- LEFT group: name field (box at a fixed x so its label has room) + Load.
   local nameBox = CreateFrame("EditBox", nil, host, "InputBoxTemplate")
-  nameBox:SetSize(150, 20)
-  nameBox:SetPoint("LEFT", nameLabel, "RIGHT", 8, 0)
+  nameBox:SetSize(150, 22)
+  nameBox:SetPoint("BOTTOMLEFT", 78, ROW_Y)
   nameBox:SetAutoFocus(false)
   nameBox:SetScript("OnEscapePressed", ns.wrap(function(self) self:ClearFocus() end))
   host.nameBox = nameBox
 
-  -- buttons (bottom-right)
+  local nameLabel = host:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  nameLabel:SetPoint("RIGHT", nameBox, "LEFT", -8, 0) -- vertically centered on the box
+  nameLabel:SetText("Plan name:")
+
+  -- Load sits right after the name box → "name this, then load" reads as a unit.
   local loadBtn = makeButton(host, "Load Plans", 100)
-  loadBtn:SetPoint("BOTTOMRIGHT", -8, 18)
+  loadBtn:SetPoint("BOTTOMLEFT", nameBox, "BOTTOMRIGHT", GAP + 4, 0)
   loadBtn:SetScript("OnClick", ns.wrap(function()
     local raw = host.editbox:GetText()
     -- WoW EditBoxes can store a typed/pasted "|" as a doubled "||" (the engine
@@ -150,37 +176,56 @@ function Editor.BuildPage(host)
     if ns.Timeline then ns.Timeline.Refresh() end
   end))
 
-  -- Plan export-as-string lives in the Manager (per-plan Export) and Send; the
-  -- old "Export All" here was redundant, so it's removed. This page is Import +
-  -- the one export Send can't do: your character → coolplan.team compare.
-  local clearBtn = makeButton(host, "Clear Box", 90)
-  clearBtn:SetPoint("RIGHT", loadBtn, "LEFT", -8, 0)
-  clearBtn:SetScript("OnClick", ns.wrap(function()
-    host.editbox:SetText("")
-    host.status:SetText("")
-  end))
-
-  -- Export this character's gear/talents/stats as a COOLPLAN-LOADOUT string to
-  -- paste into coolplan.team's "compare me vs a top player" page.
+  -- RIGHT group, anchored to the bottom-right corner and growing leftward.
+  -- "Export current character" is the page's one true export (gear/talents →
+  -- coolplan.team compare; Send can't do this), so it takes the corner. Plan
+  -- export-as-string was removed here — it lives in the Manager (per-plan Export)
+  -- + Send. "Clear Box" (a textbox utility) sits just left of it.
   local charBtn = makeButton(host, "Export current character", 175)
-  charBtn:SetPoint("LEFT", nameBox, "RIGHT", 12, 0)
+  charBtn:SetPoint("BOTTOMRIGHT", -8, ROW_Y)
   charBtn:SetScript("OnClick", ns.wrap(function()
     if ns.LoadoutExport then
-      ns.LoadoutExport.Export() -- fills + highlights this same box
+      ns.LoadoutExport.Export() -- fills + highlights the paste box
     else
       host.status:SetText("|cffff5555loadout export unavailable.|r")
     end
   end))
 
+  local clearBtn = makeButton(host, "Clear Box", 90)
+  clearBtn:SetPoint("BOTTOMRIGHT", charBtn, "BOTTOMLEFT", -GAP, 0)
+  clearBtn:SetScript("OnClick", ns.wrap(function()
+    host.editbox:SetText("")
+    host.status:SetText("")
+  end))
+
   if ns.Style then
     ns.Style.Apply(host)
-    -- the multiline box is a bare EditBox (no template art): give the scroll
-    -- area a flat dark panel so it reads as an input surface.
     local C = ns.Style.colors
-    local boxbg = sf:CreateTexture(nil, "BACKGROUND")
-    boxbg:SetPoint("TOPLEFT", -2, 2)
-    boxbg:SetPoint("BOTTOMRIGHT", 2, -2)
-    boxbg:SetColorTexture(C.bg[1], C.bg[2], C.bg[3], 0.92)
+    -- The multiline box is a bare EditBox (no template art). Wrap the scroll
+    -- area in a bordered, dark inset panel so it clearly reads as an input
+    -- field (vs. just text on the page), and light the border brand-accent
+    -- while it's focused — together with the blinking caret that signals "type
+    -- here".
+    local boxFrame = CreateFrame(
+      "Frame", nil, host, BackdropTemplateMixin and "BackdropTemplate" or nil)
+    boxFrame:SetPoint("TOPLEFT", sf, "TOPLEFT", -5, 5)
+    -- sf stops short of the right edge to clear the scrollbar; extend the border
+    -- past it so the whole input (incl. scrollbar gutter) sits inside the frame.
+    boxFrame:SetPoint("BOTTOMRIGHT", sf, "BOTTOMRIGHT", 22, -5)
+    if sf.GetFrameLevel then
+      boxFrame:SetFrameLevel(math.max(0, sf:GetFrameLevel() - 1))
+    end
+    ns.Style.InsetPanel(boxFrame, 0.92)
+    host._boxFrame = boxFrame
+
+    local function setBorder(focused)
+      if not boxFrame.SetBackdropBorderColor then return end
+      local b = focused and C.accent or C.border
+      boxFrame:SetBackdropBorderColor(b[1], b[2], b[3], 1)
+    end
+    eb:HookScript("OnEditFocusGained", ns.wrap(function() setBorder(true) end))
+    eb:HookScript("OnEditFocusLost", ns.wrap(function() setBorder(false) end))
+
     if eb.SetTextColor then eb:SetTextColor(C.text[1], C.text[2], C.text[3]) end
     if status.SetTextColor then status:SetTextColor(C.subtle[1], C.subtle[2], C.subtle[3]) end
   end
