@@ -46,7 +46,16 @@ local function joinRow(fields, keep)
   local n = #fields
   while n > keep and (fields[n] == nil or fields[n] == "") do n = n - 1 end
   local row = {}
-  for k = 1, n do row[k] = (fields[k] == nil) and "" or tostring(fields[k]) end
+  for k = 1, n do
+    local v = fields[k]
+    -- Empty MIDDLE field -> "0", NOT "". An empty field renders as "||", which
+    -- WoW's text engine treats as an escaped literal pipe and collapses to a
+    -- single "|" on copy/paste — shifting every later field left (e.g. an item's
+    -- enchant gets read as a gem, and the enchant goes missing). Trailing empties
+    -- are already trimmed above, so "0" only ever lands in interior gaps where the
+    -- parser reads it back as "none" (bonus/gems filter >0; enchant 0 = none).
+    row[k] = (v == nil or v == "") and "0" or tostring(v)
+  end
   return table.concat(row, "|")
 end
 
