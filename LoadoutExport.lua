@@ -211,6 +211,26 @@ function LoadoutExport.GatherTalents()
   if C_ClassTalents.GetActiveHeroTalentSpec then
     activeSubTree = C_ClassTalents.GetActiveHeroTalentSpec()
   end
+  -- GetActiveHeroTalentSpec can be nil transiently (right after /reload or zone-in).
+  -- With no active subtree the filter below would let BOTH hero subtrees through →
+  -- the export includes the off-spec hero tree (false diff on the website). Derive
+  -- it from the picks: the hero subTreeID with the most purchased nodes is the one
+  -- the player actually chose.
+  if not activeSubTree then
+    local counts, best, bestN = {}, nil, 0
+    for _, treeID in ipairs(configInfo.treeIDs) do
+      for _, nodeID in ipairs(C_Traits.GetTreeNodes(treeID) or {}) do
+        local node = C_Traits.GetNodeInfo(configID, nodeID)
+        local sub = node and node.subTreeID
+        local rank = node and (node.activeRank or node.ranksPurchased or 0)
+        if sub and sub > 0 and rank and rank > 0 then
+          counts[sub] = (counts[sub] or 0) + 1
+          if counts[sub] > bestN then best, bestN = sub, counts[sub] end
+        end
+      end
+    end
+    activeSubTree = best
+  end
 
   local seen = {}
   for _, treeID in ipairs(configInfo.treeIDs) do
