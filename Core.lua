@@ -68,6 +68,39 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
     else
       out("loadout export unavailable.")
     end
+  elseif cmd == "dumptree" then
+    -- DEV/PoC: dump the canonical talent node order + serialization version +
+    -- per-node state, so the website can build a Blizzard import-string encoder.
+    if not (C_ClassTalents and C_Traits and C_ClassTalents.GetActiveConfigID) then
+      out("talent API unavailable."); return
+    end
+    local configID = C_ClassTalents.GetActiveConfigID()
+    local cfg = configID and C_Traits.GetConfigInfo(configID)
+    local treeID = cfg and cfg.treeIDs and cfg.treeIDs[1]
+    if not treeID then out("no active talent tree."); return end
+    local ver = C_Traits.GetLoadoutSerializationVersion and C_Traits.GetLoadoutSerializationVersion() or "?"
+    local nodes = C_Traits.GetTreeNodes(treeID) or {}
+    local order, state = {}, {}
+    for _, nid in ipairs(nodes) do
+      order[#order + 1] = nid
+      local info = C_Traits.GetNodeInfo(configID, nid)
+      local ranks = (info and info.ranksPurchased) or 0
+      local active = (info and info.activeRank) or 0
+      local maxr = (info and info.maxRanks) or 0
+      local isChoice = (info and Enum and Enum.TraitNodeType and info.type == Enum.TraitNodeType.Selection) and 1 or 0
+      local eidx = 0
+      if info and info.activeEntry and info.entryIDs then
+        for i, eid in ipairs(info.entryIDs) do
+          if eid == info.activeEntry.entryID then eidx = i; break end
+        end
+      end
+      state[#state + 1] = ("%d.%d.%d.%d.%d.%d"):format(nid, ranks, active, maxr, isChoice, eidx)
+    end
+    local dump = ("COOLPLAN-TREEDUMP tree=%s ver=%s n=%d\norder=%s\nstate=%s"):format(
+      tostring(treeID), tostring(ver), #order, table.concat(order, ","), table.concat(state, ";"))
+    if ns.Editor and ns.Editor.SetText then ns.Editor.SetText(dump) end
+    out(("dumped tree %s (ver %s, %d nodes) to the import box — Ctrl-C to copy."):format(
+      tostring(treeID), tostring(ver), #order))
   elseif cmd == "plans" or cmd == "manager" or cmd == "saved" then
     ns.Window.Open("saved")
   elseif cmd == "timeline" then
