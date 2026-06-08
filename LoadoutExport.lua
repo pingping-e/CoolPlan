@@ -289,12 +289,14 @@ function LoadoutExport.GatherMeta()
     classToken = CLASS_TOKEN[classFile or ""] or (classFile and trim(classFile)) or ""
   end
 
-  local spec = ""
+  local spec, specID = "", 0
   if GetSpecialization and GetSpecializationInfo then
     local idx = GetSpecialization()
     if idx then
-      local _, specName = GetSpecializationInfo(idx)
+      -- GetSpecializationInfo returns: id, name, description, icon, role, ...
+      local sid, specName = GetSpecializationInfo(idx)
       if specName then spec = trim(specName) end
+      if sid then specID = sid end
     end
   end
 
@@ -304,7 +306,7 @@ function LoadoutExport.GatherMeta()
     if equipped and equipped > 0 then ilvl = math.floor(equipped + 0.5) end
   end
 
-  return { name = name, class = classToken, spec = spec, ilvl = ilvl }
+  return { name = name, class = classToken, spec = spec, specID = specID, ilvl = ilvl }
 end
 
 -- ── serialize ──────────────────────────────────────────────────────────────────
@@ -316,6 +318,11 @@ function LoadoutExport.Build()
   metaParts[#metaParts + 1] = "name=" .. sanitize(meta.name)
   if meta.class ~= "" then metaParts[#metaParts + 1] = "class=" .. sanitize(meta.class) end
   if meta.spec ~= "" then metaParts[#metaParts + 1] = "spec=" .. sanitize(meta.spec) end
+  -- specID is the locale-proof spec key the site matches on (spec NAMES export
+  -- in the client locale and won't match WCL's English names).
+  if meta.specID and meta.specID > 0 then
+    metaParts[#metaParts + 1] = "specID=" .. tostring(meta.specID)
+  end
   metaParts[#metaParts + 1] = "ilvl=" .. tostring(meta.ilvl or 0)
   -- "; " separator matches the site serializer (serializeImportedLoadout) so the
   -- string round-trips byte-identically; the parser tolerates either spacing.
