@@ -97,11 +97,20 @@ local INV_SLOTS = { 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17 }
 -- gems, and the bonus ids.
 local function parseItemLink(link)
   if not link then return nil end
-  local payload = link:match("|Hitem:([%-%d:]+)|h") or link:match("^item:([%-%d:]+)$")
+  -- Capture the WHOLE payload (anything up to the closing pipe), NOT just
+  -- digits/colons. CRAFTED items append a modifiers block that includes the
+  -- crafter's GUID (e.g. "Player-970-0A1B2C3D") — letters that a
+  -- `[%-%d:]+` class can't span, so the old pattern failed to match the link at
+  -- all and the crafted slot (often the embellished waist/feet/wrist) was
+  -- silently dropped from the export.
+  local payload = link:match("|Hitem:([^|]+)|h") or link:match("^item:(.+)$")
   if not payload then return nil end
 
+  -- Split on ':' keeping EVERY segment so indices stay aligned even past the
+  -- numeric head (the crafter GUID etc. → 0). We only read the numeric head
+  -- (itemId, enchant, gems, numBonus, bonus ids), which sits before that block.
   local parts = {}
-  for n in (payload .. ":"):gmatch("([%-%d]*):") do
+  for n in (payload .. ":"):gmatch("(.-):") do
     parts[#parts + 1] = tonumber(n) or 0
   end
 
