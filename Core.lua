@@ -62,6 +62,12 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
     ns.Window.Open("options")
   elseif cmd == "edit" or cmd == "import" or cmd == "export" then
     ns.Window.Open("import")
+  elseif cmd == "export-char" or cmd == "exportchar" or cmd == "char" or cmd == "loadout" then
+    if ns.LoadoutExport then
+      ns.LoadoutExport.Export()
+    else
+      out("loadout export unavailable.")
+    end
   elseif cmd == "plans" or cmd == "manager" or cmd == "saved" then
     ns.Window.Open("saved")
   elseif cmd == "timeline" then
@@ -114,6 +120,6 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
     end
     if n == 0 then out("no plans imported yet. /coolplan edit to paste one.") end
   else
-    out("commands: (blank)=open | timeline | plans | import | options | minimap | share | list | test | demo | move | lock | preview | reset | testenc <id> | stop | errors | debug")
+    out("commands: (blank)=open | timeline | plans | import | export-char | options | minimap | share | list | test | demo | move | lock | preview | reset | testenc <id> | stop | errors | debug")
   end
 end)

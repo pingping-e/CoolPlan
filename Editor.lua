@@ -166,6 +166,18 @@ function Editor.BuildPage(host)
     host.status:SetText("")
   end))
 
+  -- Export this character's gear/talents/stats as a COOLPLAN-LOADOUT string to
+  -- paste into coolplan.team's "compare me vs a top player" page.
+  local charBtn = makeButton(host, "Export my character", 150)
+  charBtn:SetPoint("LEFT", nameBox, "RIGHT", 12, 0)
+  charBtn:SetScript("OnClick", ns.wrap(function()
+    if ns.LoadoutExport then
+      ns.LoadoutExport.Export() -- fills + highlights this same box
+    else
+      host.status:SetText("|cffff5555loadout export unavailable.|r")
+    end
+  end))
+
   if ns.Style then
     ns.Style.Apply(host)
     -- the multiline box is a bare EditBox (no template art): give the scroll

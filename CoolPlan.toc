@@ -30,6 +30,7 @@ SoundPicker.lua
 Timeline.lua
 Manager.lua
 Editor.lua
+LoadoutExport.lua
 Options.lua
 Minimap.lua
 Core.lua
