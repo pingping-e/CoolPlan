@@ -4,9 +4,10 @@
 --
 -- Phase-gated bosses: reminders carry a phaseIndex (offset from a phase that
 -- begins on a variable trigger — a boss cast, a shield removal, or an HP%). Those
--- cues are deferred until we DETECT the phase live (COMBAT_LOG_EVENT_UNFILTERED
--- for cast/removedebuff, UnitHealth poll for health), then scheduled relative to
--- the moment the phase actually began for THIS pull. Absolute cues are unchanged.
+-- cues are deferred until we DETECT the phase live (via BigWigs/DBM boss-mod
+-- callbacks — Midnight blocks addons from reading the combat log / enemy spellIds
+-- directly), then scheduled relative to the moment the phase began for THIS pull.
+-- Absolute cues are unchanged.
 
 local _, ns = ...
 local Scheduler = {}
@@ -85,6 +86,7 @@ local function firePhase(index)
       if tr.index == index then tr.fired = true end
     end
   end
+  if ns.debug then ns.Print("|cff66ff66CoolPlan phase " .. index .. " fired @ " .. string.format("%.1f", nowElapsed()) .. "s — scheduling " .. (pend and #pend or 0) .. " cue(s)|r") end
   if not pend then return end
   pendingPhase[index] = nil
   local anchorElapsed = nowElapsed()
@@ -202,45 +204,103 @@ driver = CreateFrame("Frame")
 driver:Hide()
 driver:SetScript("OnUpdate", function(_, e) ns.safecall(tick, e) end)
 
--- Dedicated combat-log frame for live phase detection (cast / shield removal).
--- Registered only while a phased schedule is armed; cleared on Stop.
-local function onCombatLog()
+-- ── live phase detection via boss mods (BigWigs / DBM) ───────────────────────
+-- Midnight blocks addons from reading enemy spellIds / the combat log inside
+-- instances (RegisterEvent on COMBAT_LOG_EVENT_UNFILTERED is forbidden, and
+-- UNIT_SPELLCAST spellIds are "secret"). Boss mods have sanctioned access and
+-- expose callbacks, so we consume THEM: the catalog trigger spellId is matched
+-- against the spellId carried by BigWigs/DBM bar/message/timer events. The rest
+-- (occurrence count → firePhase, scheduling) is unchanged. Needs BigWigs
+-- (+LittleWigs for M+) or DBM; without either, phase-gated bosses stay absolute.
+local BOSSMOD_DEBOUNCE = 3 -- seconds: collapse the several bar/message/timer
+-- events a boss mod fires for ONE ability instance into a single occurrence.
+
+-- Capture buffer: every boss-mod event seen during the current armed encounter,
+-- with its elapsed time — so the trigger spellId can be read exactly (WoW chat
+-- isn't copyable). `/coolplan capture` dumps it to a copyable editbox. Reset per
+-- pull in run().
+local capture = {}
+local function recordCapture(label, v, name)
+  if #capture >= 400 then return end
+  capture[#capture + 1] = { t = nowElapsed(), label = label, v = v, name = name or "?" }
+end
+
+-- Feed a spellId (from a boss-mod callback) into phase detection. `fire` acts on
+-- it (an at-the-moment signal); otherwise it's logged only (diagnostics).
+-- Secret / non-number keys (some BigWigs bars, or 12.0 secret values) are
+-- skipped for matching — they can't be compared to a catalog spellId.
+local function bossModSpell(spellID, label, fire)
   if not phaseTriggers then return end
-  local _, sub, _, _, _, srcFlags, _, _, _, dstFlags, _, spellId = CombatLogGetCurrentEventInfo()
-  if not spellId then return end
-  local HOSTILE = COMBATLOG_OBJECT_REACTION_HOSTILE or 0
+  if type(spellID) ~= "number" then
+    recordCapture(label, "key:" .. type(spellID), "(non-number)")
+    if ns.debug then ns.Print("|cff888888[bossmod " .. label .. "] non-number key (" .. type(spellID) .. ")|r") end
+    return
+  end
+  local nm = (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)) or "?"
+  recordCapture(label, spellID, nm)
+  if ns.debug then
+    local match = ""
+    for _, tr in ipairs(phaseTriggers) do
+      if tr.spellId == spellID then match = " |cff66ff66<<< matches p" .. tr.index .. (fire and "" or " (log only)") .. "|r" end
+    end
+    ns.Print("|cffffcc44[bossmod " .. label .. "] " .. spellID .. " (" .. nm .. ")|r" .. match)
+  end
+  if not fire then return end
+  local now = GetTime()
   for _, tr in ipairs(phaseTriggers) do
-    if (not tr.fired) and tr.spellId == spellId then
-      -- Count ONE occurrence per cast instance, anchored at the cast START — must
-      -- match the site's start-anchored, one-per-cast counting (detect-phases.ts).
-      -- A channelled/cast-time spell emits SPELL_CAST_START then SPELL_CAST_SUCCESS
-      -- (same instance → count the START, swallow the paired SUCCESS); an instant
-      -- emits only SPELL_CAST_SUCCESS (no START → count the SUCCESS).
-      local counted = false
-      if tr.kind == "cast" then
-        if srcFlags and bit.band(srcFlags, HOSTILE) ~= 0 then
-          if sub == "SPELL_CAST_START" then
-            tr.sawStart = true
-            counted = true
-          elseif sub == "SPELL_CAST_SUCCESS" then
-            if tr.sawStart then tr.sawStart = false -- paired with prior START → de-dup
-            else counted = true end
-          end
-        end
-      elseif tr.kind == "applybuff" and sub == "SPELL_AURA_APPLIED" then
-        counted = dstFlags and bit.band(dstFlags, HOSTILE) ~= 0
-      elseif tr.kind == "removedebuff" and sub == "SPELL_AURA_REMOVED" then
-        counted = dstFlags and bit.band(dstFlags, HOSTILE) ~= 0
-      end
-      if counted then
+    if (not tr.fired) and tr.spellId == spellID then
+      if not (tr.lastSeen and (now - tr.lastSeen) < BOSSMOD_DEBOUNCE) then
+        tr.lastSeen = now
         tr.seen = tr.seen + 1
         if tr.seen >= (tr.occurrence or 1) then firePhase(tr.index) end
       end
     end
   end
 end
-local cleuFrame = CreateFrame("Frame")
-cleuFrame:SetScript("OnEvent", function() ns.safecall(onCombatLog) end)
+
+-- Registered once on PLAYER_LOGIN, after BigWigs/DBM have loaded (see Core.lua).
+function Scheduler.InitBossMods()
+  local sources = {}
+  local BW = _G.BigWigsLoader
+  if BW and BW.RegisterMessage then
+    local proxy = {} -- any table works as the CallbackHandler registrant
+    -- key (3rd arg) is the spellId for spell bars/messages. We act on the
+    -- at-event Message AND StartBar: for the HP/objective-gated abilities we gate
+    -- on, BigWigs draws the cast bar AT the cast, so timing matches; the debounce
+    -- collapses the Message+Bar pair into one occurrence.
+    BW.RegisterMessage(proxy, "BigWigs_Message",  function(_, _, key) bossModSpell(key, "BW:Msg", true) end)
+    BW.RegisterMessage(proxy, "BigWigs_StartBar", function(_, _, key) bossModSpell(key, "BW:Bar", true) end)
+    BW.RegisterMessage(proxy, "BigWigs_SetStage", function(_, _, stage)
+      if phaseTriggers then recordCapture("BW:SetStage", "stage:" .. tostring(stage), "(stage)") end
+      if ns.debug then ns.Print("|cffffcc44[bossmod BW:SetStage] " .. tostring(stage) .. "|r") end
+    end)
+    sources[#sources + 1] = "BigWigs"
+  end
+  local DBM = _G.DBM
+  if DBM and DBM.RegisterCallback then
+    DBM:RegisterCallback("DBM_Announce",   function(_, _, _, _, spellId) bossModSpell(spellId, "DBM:Ann", true) end)
+    DBM:RegisterCallback("DBM_TimerStart", function(_, _, _, _, _, _, spellId) bossModSpell(spellId, "DBM:Timer", false) end)
+    sources[#sources + 1] = "DBM"
+  end
+  ns.bossModSources = sources
+  if ns.debug then
+    ns.Print("|cff88ccffCoolPlan boss-mod bridge: " .. (#sources > 0 and table.concat(sources, "+") or "NONE — install BigWigs+LittleWigs or DBM for live phases") .. "|r")
+  end
+end
+
+-- Build a copyable dump of the capture buffer (every boss-mod event this pull,
+-- with elapsed time) — WoW chat isn't copyable, so /coolplan capture shows this
+-- in the editor box. Used to curate each phase boss's live trigger spellId.
+function Scheduler.GetCaptureText()
+  if #capture == 0 then
+    return "COOLPLAN CAPTURE: nothing recorded.\nPull a phase-gated boss with BigWigs/DBM active (and a plan armed) first, then /coolplan capture."
+  end
+  local lines = { "COOLPLAN CAPTURE  (elapsed | source | id | name)  — find the sub-phase ENTRY alert:" }
+  for _, c in ipairs(capture) do
+    lines[#lines + 1] = string.format("%6.1fs | %-11s | %s | %s", c.t, c.label, tostring(c.v), c.name)
+  end
+  return table.concat(lines, "\n")
+end
 
 -- Run an arbitrary cue list (already filtered). Returns true if armed.
 -- opts (optional): { preview=true, speed=1, onTick=fn } for the live preview,
@@ -249,6 +309,7 @@ local function run(cues, opts)
   Scheduler.Stop()
   local previewMode = opts and opts.preview
 
+  wipe(capture) -- fresh capture buffer per pull (for /coolplan capture)
   queue = {}
   pendingPhase = nil
   phaseTriggers = nil
@@ -271,6 +332,13 @@ local function run(cues, opts)
       end
     end
     if #triggers > 0 then phaseTriggers = triggers end
+    if ns.debug and phaseTriggers then
+      local ids = {}
+      for _, tr in ipairs(phaseTriggers) do
+        ids[#ids + 1] = "p" .. tr.index .. "=" .. tostring(tr.kind) .. ":" .. tostring(tr.spellId or tr.pct) .. "x" .. tostring(tr.occurrence or 1)
+      end
+      ns.Print("|cff88ccffCoolPlan armed " .. #phaseTriggers .. " phase trigger(s): " .. table.concat(ids, ", ") .. "|r")
+    end
   end
 
   local function phaseHasTrigger(idx)
@@ -310,9 +378,8 @@ local function run(cues, opts)
     pullTime = nil
   else
     pullTime = GetTime()
-    if phaseTriggers then
-      cleuFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
-    end
+    -- Phase triggers fire via the boss-mod bridge (registered once on login);
+    -- bossModSpell gates on phaseTriggers, so nothing extra is needed here.
   end
   driver:Show()
   return true
@@ -423,6 +490,16 @@ function Scheduler.Start(encounterID)
   return run(cues, { phases = plan and plan.phases })
 end
 
+-- Manually fire a phase NOW (testing): isolates the cue display/scheduling path
+-- from live CLEU detection. Arm with `/coolplan testenc <id>` first, then
+-- `/coolplan firephase <n>` — the phase-N cues should schedule at now + offset.
+function Scheduler.FirePhase(index)
+  if not pullTime then ns.Print("CoolPlan: arm a schedule first (/coolplan testenc <id>).") return false end
+  if ns.debug then ns.Print("|cff88ccffCoolPlan: manually firing phase " .. tostring(index) .. "|r") end
+  firePhase(index)
+  return true
+end
+
 -- A short synthetic schedule so the user can preview the countdown in town.
 function Scheduler.StartDemo()
   local me = UnitName("player")
@@ -437,7 +514,8 @@ end
 
 function Scheduler.Stop()
   if driver then driver:Hide() end
-  if cleuFrame then cleuFrame:UnregisterAllEvents() end
+  -- Boss-mod callbacks stay registered (once, on login); bossModSpell no-ops once
+  -- phaseTriggers is cleared below.
   queue, pullTime, activeId = nil, nil, nil
   pendingPhase, phaseTriggers, hasHealthTrigger = nil, nil, false
   preview, previewClock, previewSpeed, previewTotal, previewOnTick = false, 0, 1, 0, nil

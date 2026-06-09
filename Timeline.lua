@@ -96,7 +96,15 @@ local function getMarker(i)
   m:SetScript("OnEnter", ns.wrap(function(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:AddLine(self._name or ("Spell " .. tostring(self._spellId or "?")))
-    GameTooltip:AddLine(ns.Format.FormatTime(self._time or 0), 0.8, 0.8, 0.8)
+    -- Phase-anchored cues show their phase-relative time (e.g. "p2+0:21.9"); the
+    -- on-canvas x is a synthetic preview layout, not a real pull time.
+    local timeStr
+    if self._phaseIndex and self._phaseIndex > 1 then
+      timeStr = "p" .. self._phaseIndex .. "+" .. ns.Format.FormatTime(self._offsetMs or 0)
+    else
+      timeStr = ns.Format.FormatTime(self._time or 0)
+    end
+    GameTooltip:AddLine(timeStr, 0.8, 0.8, 0.8)
     GameTooltip:Show()
   end))
   m:SetScript("OnLeave", ns.wrap(function() GameTooltip:Hide() end))
@@ -150,11 +158,32 @@ local function renderCanvas()
   local e, p = currentNote()
   local reminders = (p and p.reminders) or {}
   local boss = (p and p.boss) or {}
+  local phases = (p and p.phases) or {}
 
-  -- compute time extent
+  -- The preview has no live boss, so phase-anchored cues (timeMs is an OFFSET
+  -- from phase N's live start) can't be placed at a real pull time. Lay the
+  -- phases out SEQUENTIALLY: phase 1 at its absolute times, each later phase
+  -- starting just after the previous phase's content. displayTime() maps a cue
+  -- onto that layout so the timeline reads in play order. (The live addon
+  -- re-anchors each phase to the real trigger; this is only the static preview.)
+  local PHASE_GAP_MS = 4000
+  local function phaseOf(item) return (item.phaseIndex and item.phaseIndex > 1) and item.phaseIndex or 1 end
+  local maxPhase = 1
+  for _, ph in ipairs(phases) do if ph.index and ph.index > maxPhase then maxPhase = ph.index end end
+  for _, r in ipairs(reminders) do local q = phaseOf(r); if q > maxPhase then maxPhase = q end end
+  for _, b in ipairs(boss) do local q = phaseOf(b); if q > maxPhase then maxPhase = q end end
+  local maxLocal = {}
+  local function noteLocal(item) local q = phaseOf(item); if (item.timeMs or 0) > (maxLocal[q] or 0) then maxLocal[q] = item.timeMs or 0 end end
+  for _, r in ipairs(reminders) do noteLocal(r) end
+  for _, b in ipairs(boss) do noteLocal(b) end
+  local phaseStart = { [1] = 0 }
+  for n = 2, maxPhase do phaseStart[n] = phaseStart[n - 1] + (maxLocal[n - 1] or 0) + PHASE_GAP_MS end
+  local function displayTime(item) return (phaseStart[phaseOf(item)] or 0) + (item.timeMs or 0) end
+
+  -- compute time extent (in the sequential display layout)
   local maxMs = 1000
-  for _, r in ipairs(reminders) do if r.timeMs > maxMs then maxMs = r.timeMs end end
-  for _, b in ipairs(boss) do if b.timeMs > maxMs then maxMs = b.timeMs end end
+  for _, r in ipairs(reminders) do local d = displayTime(r); if d > maxMs then maxMs = d end end
+  for _, b in ipairs(boss) do local d = displayTime(b); if d > maxMs then maxMs = d end end
   local totalSec = maxMs / 1000 + 2
   local pps = pxPerSec()
   canvas._pxPerSec = pps
@@ -174,11 +203,11 @@ local function renderCanvas()
   local labelIndex = 0
   local rowIndex = 0
 
-  local function placeMarker(spellId, timeMs, rowTop, isBoss, nameHint)
+  local function placeMarker(spellId, item, rowTop, isBoss, nameHint)
     markerIndex = markerIndex + 1
     local m = getMarker(markerIndex)
     m:ClearAllPoints()
-    local x = LABEL_W + (timeMs / 1000) * pps
+    local x = LABEL_W + (displayTime(item) / 1000) * pps
     m:SetPoint("TOPLEFT", canvas, "TOPLEFT", x - ICON / 2, rowTop)
     local icon = spellIcon(spellId)
     if icon then
@@ -188,7 +217,9 @@ local function renderCanvas()
       if isBoss then m.dot:SetColorTexture(1, 0.3, 0.25, 0.95)
       else m.dot:SetColorTexture(0.4, 0.7, 1, 0.95) end
     end
-    m._time = timeMs
+    m._time = displayTime(item)
+    m._phaseIndex = item.phaseIndex
+    m._offsetMs = item.timeMs
     m._spellId = spellId
     m._name = (nameHint and nameHint ~= "" and nameHint) or spellNameOf(spellId)
     m:Show()
@@ -216,7 +247,7 @@ local function renderCanvas()
     lbl:Show()
 
     for _, b in ipairs(boss) do
-      placeMarker(b.spellId, b.timeMs, y - 3, true, b.spellName)
+      placeMarker(b.spellId, b, y - 3, true, b.spellName)
     end
     y = y - BOSS_ROW_H - 2
   end
@@ -241,7 +272,7 @@ local function renderCanvas()
     lbl:Show()
 
     for _, r in ipairs(byPlayer[pl]) do
-      placeMarker(r.spellId, r.timeMs, y - 3, false, r.spellName)
+      placeMarker(r.spellId, r, y - 3, false, r.spellName)
     end
     y = y - ROW_H - 2
   end
@@ -275,7 +306,31 @@ local function renderCanvas()
     a:Show()
     sec = sec + tickSec
   end
-  for _, b in ipairs(boss) do vline(b.timeMs, true) end
+  for _, b in ipairs(boss) do vline(displayTime(b), true) end
+
+  -- phase-boundary dividers (preview layout): a violet line + label where each
+  -- gated phase begins in the sequential layout, so it's clear the later cues
+  -- are phase-relative (not real pull times).
+  for n = 2, maxPhase do
+    if phaseStart[n] then
+      local x = LABEL_W + (phaseStart[n] / 1000) * pps
+      lineIndex = lineIndex + 1
+      local t = getLine(lineIndex)
+      t:ClearAllPoints()
+      t:SetPoint("TOPLEFT", canvas, "TOPLEFT", x, gridTop)
+      t:SetPoint("BOTTOMLEFT", canvas, "TOPLEFT", x, gridBottom)
+      t:SetColorTexture(0.70, 0.52, 1, 0.65)
+      t:Show()
+      local lbl = "P" .. n
+      for _, ph in ipairs(phases) do if ph.index == n then lbl = (ph.label and ph.label ~= "" and ph.label) or lbl; break end end
+      axisIndex = axisIndex + 1
+      local a = getAxis(axisIndex)
+      a:ClearAllPoints()
+      a:SetPoint("TOPLEFT", canvas, "TOPLEFT", x + 2, gridTop - 12)
+      a:SetText("|cffb38cff" .. lbl .. "|r")
+      a:Show()
+    end
+  end
 
   hideFrom(markerPool, markerIndex, "marker")
   hideFrom(rowPool, rowIndex, "tex")

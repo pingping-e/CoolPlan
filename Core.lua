@@ -27,6 +27,9 @@ Core:SetScript("OnEvent", ns.wrap(function(_, event, ...)
     ns.Reminders.Init()
     ns.Comm.Init()
     if ns.Minimap then ns.Minimap.Init() end
+    -- Register boss-mod (BigWigs/DBM) callbacks now that all addons have loaded —
+    -- live phase detection routes through them in Midnight (combat log is blocked).
+    if ns.Scheduler.InitBossMods then ns.Scheduler.InitBossMods() end
     out("loaded. /coolplan to open, /coolplan import to paste a plan.")
   elseif event == "ENCOUNTER_START" then
     local encounterID = ...
@@ -136,6 +139,15 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
     else
       out("usage: /coolplan testenc <encounterID>")
     end
+  elseif cmd == "firephase" then
+    local n = tonumber(rest)
+    if n then ns.Scheduler.FirePhase(n) else out("usage: /coolplan firephase <n>  (arm with /coolplan testenc <id> first)") end
+  elseif cmd == "capture" then
+    -- Dump the boss-mod events seen this pull into the (copyable) editor box, so
+    -- the sub-phase ENTRY trigger spellId can be read exactly to curate a boss.
+    local text = ns.Scheduler.GetCaptureText and ns.Scheduler.GetCaptureText() or "capture unavailable."
+    if ns.Editor and ns.Editor.SetText then ns.Editor.SetText(text); if ns.Editor.Open then ns.Editor.Open() end
+    else out(text) end
   elseif cmd == "stop" then
     ns.Scheduler.Stop()
     out("stopped.")
@@ -144,6 +156,11 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
   elseif cmd == "debug" then
     ns.debug = not ns.debug
     out("debug mode " .. (ns.debug and "ON (errors will pop up)" or "OFF (errors suppressed)") .. ".")
+    if ns.debug then
+      local src = ns.bossModSources
+      out("boss-mod bridge: " .. ((src and #src > 0) and table.concat(src, "+")
+        or "|cffff5555NONE — install BigWigs (+LittleWigs for M+) or DBM for live phases|r"))
+    end
   elseif cmd == "list" then
     local n = 0
     for id, e in pairs(ns.DB.Library()) do
