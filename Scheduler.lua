@@ -220,6 +220,7 @@ local BOSSMOD_DEBOUNCE = 3 -- seconds: collapse the several bar/message/timer
 -- isn't copyable). `/coolplan capture` dumps it to a copyable editbox. Reset per
 -- pull in run().
 local capture = {}
+local lastTimelinePhase -- last Encounter-Timeline info.phase seen (diagnostic)
 local function recordCapture(label, v, name)
   if #capture >= 400 then return end
   capture[#capture + 1] = { t = nowElapsed(), label = label, v = v, name = name or "?" }
@@ -258,6 +259,57 @@ local function bossModSpell(spellID, label, fire)
   end
 end
 
+-- ── Encounter Timeline (official C_EncounterTimeline API) ─────────────────────
+-- Midnight's SANCTIONED encounter-event feed — the same one NSRT uses (NOT
+-- BigWigs/DBM). Events ENCOUNTER_TIMELINE_EVENT_ADDED/REMOVED/STATE_CHANGED +
+-- ENCOUNTER_WARNING carry an `info` table (id, phase, duration, time, text, …).
+-- CONFIRMED to fire in M+ dungeons (user test 2026-06-10). For now this only
+-- DIAGNOSES: it logs every field (secret-guarded) into the capture buffer so one
+-- pull reveals whether info.phase tracks our sub-phases — then we can drive
+-- firePhase from it (cleaner than the BigWigs bridge: official, no BigWigs
+-- dependency, no per-boss spellId curation). Fields may be `secret` inside
+-- instances, so guard EVERY access.
+local function safeVal(v)
+  if v == nil then return "nil" end
+  if issecretvalue and issecretvalue(v) then return "<secret>" end
+  return tostring(v)
+end
+
+local function onTimelineEvent(e, a1)
+  local line
+  if e == "ENCOUNTER_TIMELINE_EVENT_ADDED" then
+    local info = a1
+    local phase = info and info.phase
+    line = "id=" .. safeVal(info and info.id)
+      .. " phase=" .. safeVal(phase)
+      .. " dur=" .. safeVal(info and info.duration)
+      .. " text=" .. safeVal(info and info.text)
+    -- Track phase changes when `phase` is a real (non-secret) number — the signal
+    -- we hope to drive firePhase from once the info.phase→our-index mapping is known.
+    if type(phase) == "number" and not (issecretvalue and issecretvalue(phase)) then
+      if phase ~= lastTimelinePhase then
+        lastTimelinePhase = phase
+        recordCapture("TL:PHASE", "phase:" .. phase, "(phase change)")
+        if ns.debug then ns.Print("|cff00ff00[timeline] PHASE → " .. phase .. "|r") end
+      end
+    end
+  elseif e == "ENCOUNTER_TIMELINE_EVENT_STATE_CHANGED" then
+    local id = a1
+    local st = C_EncounterTimeline and C_EncounterTimeline.GetEventState and C_EncounterTimeline.GetEventState(id)
+    line = "id=" .. safeVal(id) .. " state=" .. safeVal(st)
+  elseif e == "ENCOUNTER_TIMELINE_EVENT_REMOVED" then
+    line = "id=" .. safeVal(a1)
+  elseif e == "ENCOUNTER_WARNING" then
+    local info = a1
+    line = "dur=" .. safeVal(info and info.duration) .. " sev=" .. safeVal(info and info.severity)
+  else
+    line = safeVal(a1)
+  end
+  local short = e:gsub("ENCOUNTER_TIMELINE_EVENT_", ""):gsub("ENCOUNTER_", "")
+  recordCapture("TL:" .. short, line, "")
+  if ns.debug then ns.Print("|cff66ccff[timeline " .. short .. "] " .. line .. "|r") end
+end
+
 -- Registered once on PLAYER_LOGIN, after BigWigs/DBM have loaded (see Core.lua).
 function Scheduler.InitBossMods()
   local sources = {}
@@ -282,6 +334,21 @@ function Scheduler.InitBossMods()
     DBM:RegisterCallback("DBM_TimerStart", function(_, _, _, _, _, _, spellId) bossModSpell(spellId, "DBM:Timer", false) end)
     sources[#sources + 1] = "DBM"
   end
+  -- Official Encounter Timeline feed (sanctioned in Midnight instances incl. M+).
+  -- Always on (diagnostic) when the client exposes it; independent of BigWigs/DBM.
+  if C_EncounterTimeline then
+    local tf = CreateFrame("Frame")
+    for _, ev in ipairs({
+      "ENCOUNTER_TIMELINE_EVENT_ADDED",
+      "ENCOUNTER_TIMELINE_EVENT_REMOVED",
+      "ENCOUNTER_TIMELINE_EVENT_STATE_CHANGED",
+      "ENCOUNTER_WARNING",
+    }) do
+      pcall(tf.RegisterEvent, tf, ev) -- pcall: older clients may not have the event
+    end
+    tf:SetScript("OnEvent", function(_, e, a1) onTimelineEvent(e, a1) end)
+    sources[#sources + 1] = "EncounterTimeline"
+  end
   ns.bossModSources = sources
   if ns.debug then
     ns.Print("|cff88ccffCoolPlan boss-mod bridge: " .. (#sources > 0 and table.concat(sources, "+") or "NONE — install BigWigs+LittleWigs or DBM for live phases") .. "|r")
@@ -293,9 +360,14 @@ end
 -- in the editor box. Used to curate each phase boss's live trigger spellId.
 function Scheduler.GetCaptureText()
   if #capture == 0 then
-    return "COOLPLAN CAPTURE: nothing recorded.\nPull a phase-gated boss with BigWigs/DBM active (and a plan armed) first, then /coolplan capture."
+    return "COOLPLAN CAPTURE: nothing recorded.\nArm a plan (or /coolplan testenc <id>) then pull a boss — captures BigWigs (BW:*) AND official Encounter Timeline (TL:*) events. Then /coolplan capture."
   end
-  local lines = { "COOLPLAN CAPTURE  (elapsed | source | id | name)  — find the sub-phase ENTRY alert:" }
+  local lines = {
+    "COOLPLAN CAPTURE  (elapsed | source | value | name)",
+    "  BW:* = BigWigs/DBM callbacks (id = spellId).  TL:* = official C_EncounterTimeline.",
+    "  Look for: TL:PHASE lines (does info.phase track the sub-phases?), and which",
+    "  TL:ADDED / BW line lines up with each sub-phase entry/exit.",
+  }
   for _, c in ipairs(capture) do
     lines[#lines + 1] = string.format("%6.1fs | %-11s | %s | %s", c.t, c.label, tostring(c.v), c.name)
   end
@@ -310,6 +382,7 @@ local function run(cues, opts)
   local previewMode = opts and opts.preview
 
   wipe(capture) -- fresh capture buffer per pull (for /coolplan capture)
+  lastTimelinePhase = nil
   queue = {}
   pendingPhase = nil
   phaseTriggers = nil
