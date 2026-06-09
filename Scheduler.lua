@@ -204,7 +204,6 @@ driver:SetScript("OnUpdate", function(_, e) ns.safecall(tick, e) end)
 
 -- Dedicated combat-log frame for live phase detection (cast / shield removal).
 -- Registered only while a phased schedule is armed; cleared on Stop.
-local CAST_SUBEVENTS = { SPELL_CAST_SUCCESS = true, SPELL_CAST_START = true }
 local function onCombatLog()
   if not phaseTriggers then return end
   local _, sub, _, _, _, srcFlags, _, _, _, dstFlags, _, spellId = CombatLogGetCurrentEventInfo()
@@ -212,13 +211,28 @@ local function onCombatLog()
   local HOSTILE = COMBATLOG_OBJECT_REACTION_HOSTILE or 0
   for _, tr in ipairs(phaseTriggers) do
     if (not tr.fired) and tr.spellId == spellId then
-      local match = false
-      if tr.kind == "cast" and CAST_SUBEVENTS[sub] then
-        match = srcFlags and bit.band(srcFlags, HOSTILE) ~= 0
+      -- Count ONE occurrence per cast instance, anchored at the cast START — must
+      -- match the site's start-anchored, one-per-cast counting (detect-phases.ts).
+      -- A channelled/cast-time spell emits SPELL_CAST_START then SPELL_CAST_SUCCESS
+      -- (same instance → count the START, swallow the paired SUCCESS); an instant
+      -- emits only SPELL_CAST_SUCCESS (no START → count the SUCCESS).
+      local counted = false
+      if tr.kind == "cast" then
+        if srcFlags and bit.band(srcFlags, HOSTILE) ~= 0 then
+          if sub == "SPELL_CAST_START" then
+            tr.sawStart = true
+            counted = true
+          elseif sub == "SPELL_CAST_SUCCESS" then
+            if tr.sawStart then tr.sawStart = false -- paired with prior START → de-dup
+            else counted = true end
+          end
+        end
+      elseif tr.kind == "applybuff" and sub == "SPELL_AURA_APPLIED" then
+        counted = dstFlags and bit.band(dstFlags, HOSTILE) ~= 0
       elseif tr.kind == "removedebuff" and sub == "SPELL_AURA_REMOVED" then
-        match = dstFlags and bit.band(dstFlags, HOSTILE) ~= 0
+        counted = dstFlags and bit.band(dstFlags, HOSTILE) ~= 0
       end
-      if match then
+      if counted then
         tr.seen = tr.seen + 1
         if tr.seen >= (tr.occurrence or 1) then firePhase(tr.index) end
       end

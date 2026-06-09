@@ -234,7 +234,7 @@ function Format.Parse(text)
           if idx then
             local phase = { index = idx, label = trim(f[3] or "") }
             local kind = trim(f[4] or "")
-            if kind == "cast" or kind == "removedebuff" or kind == "health" then
+            if kind == "cast" or kind == "removedebuff" or kind == "applybuff" or kind == "health" then
               local trig = { kind = kind }
               if kind == "health" then
                 trig.pct = tonumber(f[5])
