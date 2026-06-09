@@ -1,6 +1,12 @@
 -- Scheduling: on ENCOUNTER_START, build a sorted reminder queue and drive it
--- with a single 0.1s ticker. Each tick computes the imminent alert (within its
--- lead window) + the upcoming queue, and renders an anticipation countdown.
+-- with a single per-frame ticker. Each tick computes the imminent alert (within
+-- its lead window) + the upcoming queue, and renders an anticipation countdown.
+--
+-- Phase-gated bosses: reminders carry a phaseIndex (offset from a phase that
+-- begins on a variable trigger — a boss cast, a shield removal, or an HP%). Those
+-- cues are deferred until we DETECT the phase live (COMBAT_LOG_EVENT_UNFILTERED
+-- for cast/removedebuff, UnitHealth poll for health), then scheduled relative to
+-- the moment the phase actually began for THIS pull. Absolute cues are unchanged.
 
 local _, ns = ...
 local Scheduler = {}
@@ -13,6 +19,11 @@ local LINGER = 1.0
 local COUNTDOWN_LEAD = 3
 
 local driver, pullTime, queue, activeId
+-- phase state (live, phase-gated bosses only):
+--   pendingPhase[idx]  = { cue, ... } cues waiting for phase idx to begin
+--   phaseTriggers      = { {index, kind, spellId, occurrence, pct, seen, fired}, ... }
+--   hasHealthTrigger   = true if any trigger polls UnitHealth
+local pendingPhase, phaseTriggers, hasHealthTrigger
 -- preview mode: a virtual clock advanced by `speed`x each real tick, with an
 -- optional onTick(elapsed, total) callback (used by the Timeline playhead).
 local preview = false
@@ -34,14 +45,87 @@ local function nowElapsed()
   return GetTime() - pullTime
 end
 
+-- Push a cue onto the live queue at an absolute elapsed-seconds castAt, computing
+-- its on-screen (lead) and audible (soundLead) windows. Shared by the initial
+-- build and dynamic phase insertion.
+local function enqueue(cue, castAt)
+  local o = ns.DB.Options()
+  local lead = o.leadSeconds or 4
+  local soundLead = o.soundLeadSeconds or 0
+  queue[#queue + 1] = {
+    cue = cue,
+    castAt = castAt,
+    showAt = math.max(0, castAt - lead),
+    soundAt = math.max(0, castAt - soundLead),
+    soundCued = false,
+  }
+end
+
+-- Sort the queue by castAt and (re)flag cues that follow the previous cast within
+-- the countdown window so they skip their spoken countdown. Recomputed whenever
+-- the queue changes (initial build + each phase insertion).
+local function finalizeQueue()
+  table.sort(queue, function(a, b) return a.castAt < b.castAt end)
+  local prevCast
+  for _, item in ipairs(queue) do
+    item.silentCountdown = nil
+    if prevCast and (item.castAt - prevCast) < COUNTDOWN_LEAD then
+      item.silentCountdown = true
+    end
+    prevCast = item.castAt
+  end
+end
+
+-- A phase began (its trigger fired): anchor here and schedule its deferred cues
+-- relative to this instant. One-shot per phase.
+local function firePhase(index)
+  local pend = pendingPhase and pendingPhase[index]
+  if phaseTriggers then
+    for _, tr in ipairs(phaseTriggers) do
+      if tr.index == index then tr.fired = true end
+    end
+  end
+  if not pend then return end
+  pendingPhase[index] = nil
+  local anchorElapsed = nowElapsed()
+  for _, cue in ipairs(pend) do
+    enqueue(cue, anchorElapsed + cue.timeMs / 1000)
+  end
+  finalizeQueue()
+end
+
+-- Health-gated phases: poll boss unit frames; fire when any boss drops to/below
+-- the threshold. Cheap, and only called when a health trigger is pending.
+local function pollHealth()
+  if not phaseTriggers then return end
+  for _, tr in ipairs(phaseTriggers) do
+    if (not tr.fired) and tr.kind == "health" and tr.pct then
+      for u = 1, 5 do
+        local unit = "boss" .. u
+        if UnitExists(unit) then
+          local mx = UnitHealthMax(unit)
+          if mx and mx > 0 then
+            local pc = UnitHealth(unit) / mx * 100
+            if pc > 0 and pc <= tr.pct then
+              firePhase(tr.index)
+              break
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
 -- Driven every frame (OnUpdate) so bars deplete smoothly instead of stepping at
--- a 0.1s tick. `dt` is the real frame delta; preview advances its virtual clock
--- by dt*speed.
+-- a tick. `dt` is the real frame delta; preview advances its virtual clock by
+-- dt*speed.
 local function tick(dt)
   if not queue then return end
   if (not preview) and not pullTime then return end
   local o = ns.DB.Options()
   if preview then previewClock = previewClock + (dt or 0) * previewSpeed end
+  if (not preview) and hasHealthTrigger then pollHealth() end
   local elapsed = nowElapsed()
   local lead = o.leadSeconds or 4
 
@@ -118,43 +202,92 @@ driver = CreateFrame("Frame")
 driver:Hide()
 driver:SetScript("OnUpdate", function(_, e) ns.safecall(tick, e) end)
 
+-- Dedicated combat-log frame for live phase detection (cast / shield removal).
+-- Registered only while a phased schedule is armed; cleared on Stop.
+local CAST_SUBEVENTS = { SPELL_CAST_SUCCESS = true, SPELL_CAST_START = true }
+local function onCombatLog()
+  if not phaseTriggers then return end
+  local _, sub, _, _, _, srcFlags, _, _, _, dstFlags, _, spellId = CombatLogGetCurrentEventInfo()
+  if not spellId then return end
+  local HOSTILE = COMBATLOG_OBJECT_REACTION_HOSTILE or 0
+  for _, tr in ipairs(phaseTriggers) do
+    if (not tr.fired) and tr.spellId == spellId then
+      local match = false
+      if tr.kind == "cast" and CAST_SUBEVENTS[sub] then
+        match = srcFlags and bit.band(srcFlags, HOSTILE) ~= 0
+      elseif tr.kind == "removedebuff" and sub == "SPELL_AURA_REMOVED" then
+        match = dstFlags and bit.band(dstFlags, HOSTILE) ~= 0
+      end
+      if match then
+        tr.seen = tr.seen + 1
+        if tr.seen >= (tr.occurrence or 1) then firePhase(tr.index) end
+      end
+    end
+  end
+end
+local cleuFrame = CreateFrame("Frame")
+cleuFrame:SetScript("OnEvent", function() ns.safecall(onCombatLog) end)
+
 -- Run an arbitrary cue list (already filtered). Returns true if armed.
--- opts (optional): { preview=true, speed=1, onTick=fn } for the live preview.
+-- opts (optional): { preview=true, speed=1, onTick=fn } for the live preview,
+-- and { phases = {...} } (live only) to enable phase re-anchoring.
 local function run(cues, opts)
   Scheduler.Stop()
-  local o = ns.DB.Options()
-  local lead = o.leadSeconds or 4
-  local soundLead = o.soundLeadSeconds or 0
+  local previewMode = opts and opts.preview
 
   queue = {}
+  pendingPhase = nil
+  phaseTriggers = nil
+  hasHealthTrigger = false
+
+  -- Build the live trigger table from the plan's phases. In preview there are no
+  -- real triggers, so phase cues are flattened to absolute (anchored at the pull)
+  -- just so the whole plan is visible in the Timeline test.
+  local phases = opts and opts.phases
+  if phases and not previewMode then
+    local triggers = {}
+    for _, p in ipairs(phases) do
+      local t = p.trigger
+      if p.index and p.index > 1 and t and (t.spellId or t.pct) then
+        triggers[#triggers + 1] = {
+          index = p.index, kind = t.kind, spellId = t.spellId,
+          occurrence = t.occurrence or 1, pct = t.pct, seen = 0, fired = false,
+        }
+        if t.kind == "health" then hasHealthTrigger = true end
+      end
+    end
+    if #triggers > 0 then phaseTriggers = triggers end
+  end
+
+  local function phaseHasTrigger(idx)
+    if not phaseTriggers then return false end
+    for _, tr in ipairs(phaseTriggers) do
+      if tr.index == idx then return true end
+    end
+    return false
+  end
+
   local maxCast = 0
   for _, c in ipairs(cues) do
-    local castAt = c.timeMs / 1000
-    if castAt > maxCast then maxCast = castAt end
-    queue[#queue + 1] = {
-      cue = c,
-      castAt = castAt,
-      showAt = math.max(0, castAt - lead),      -- on-screen anticipation window
-      soundAt = math.max(0, castAt - soundLead), -- audible cue trigger
-      soundCued = false,
-    }
-  end
-  if #queue == 0 then return false end
-  table.sort(queue, function(a, b) return a.castAt < b.castAt end)
-
-  -- Flag cues that follow the previous cast within the countdown window so they
-  -- skip their spoken countdown (avoids a clipped countdown stuttering right
-  -- after the lead spell's). Measured against the immediate previous cast even
-  -- if that one was itself silenced, so a whole burst stays quiet after its lead.
-  local prevCast
-  for _, item in ipairs(queue) do
-    if prevCast and (item.castAt - prevCast) < COUNTDOWN_LEAD then
-      item.silentCountdown = true
+    local pidx = c.phaseIndex
+    if pidx and pidx > 1 and phaseHasTrigger(pidx) then
+      -- defer until that phase's trigger fires
+      pendingPhase = pendingPhase or {}
+      pendingPhase[pidx] = pendingPhase[pidx] or {}
+      local list = pendingPhase[pidx]
+      list[#list + 1] = c
+    else
+      -- absolute (or a phase with no usable trigger → best-effort offset-from-pull)
+      local castAt = c.timeMs / 1000
+      enqueue(c, castAt)
+      if castAt > maxCast then maxCast = castAt end
     end
-    prevCast = item.castAt
   end
 
-  if opts and opts.preview then
+  if #queue == 0 and not pendingPhase then return false end
+  finalizeQueue()
+
+  if previewMode then
     preview = true
     previewClock = 0
     previewSpeed = opts.speed or 1
@@ -163,6 +296,9 @@ local function run(cues, opts)
     pullTime = nil
   else
     pullTime = GetTime()
+    if phaseTriggers then
+      cleuFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+    end
   end
   driver:Show()
   return true
@@ -254,7 +390,7 @@ local function buildCues(reminders, _boss, previewAll, forPlayer)
     end
     if meOk and (previewAll or forPlayer or ns.DB.CategoryEnabled(r.category)) then
       cues[#cues + 1] = {
-        kind = "cd", timeMs = r.timeMs, spellId = r.spellId,
+        kind = "cd", timeMs = r.timeMs, spellId = r.spellId, phaseIndex = r.phaseIndex,
         player = r.player, category = r.category, spellName = r.spellName, alert = r.alert,
       }
     end
@@ -262,7 +398,7 @@ local function buildCues(reminders, _boss, previewAll, forPlayer)
   return cues
 end
 
--- Start from the encounter's ACTIVE plan (boss timeline lives on the plan).
+-- Start from the encounter's ACTIVE plan (boss timeline + phases live on the plan).
 function Scheduler.Start(encounterID)
   local e = ns.DB.GetEncounter(encounterID)
   if not e then return false end
@@ -270,7 +406,7 @@ function Scheduler.Start(encounterID)
   local cues = buildCues(plan and plan.reminders or {}, plan and plan.boss)
   if #cues == 0 then return false end
   activeId = encounterID
-  return run(cues)
+  return run(cues, { phases = plan and plan.phases })
 end
 
 -- A short synthetic schedule so the user can preview the countdown in town.
@@ -287,7 +423,9 @@ end
 
 function Scheduler.Stop()
   if driver then driver:Hide() end
+  if cleuFrame then cleuFrame:UnregisterAllEvents() end
   queue, pullTime, activeId = nil, nil, nil
+  pendingPhase, phaseTriggers, hasHealthTrigger = nil, nil, false
   preview, previewClock, previewSpeed, previewTotal, previewOnTick = false, 0, 1, 0, nil
   if ns.Reminders then ns.Reminders.Clear() end
 end
@@ -295,7 +433,8 @@ end
 -- Live preview of a plan, with no real encounter: virtual clock from 0.
 -- `reminders`/`boss` come from a saved note. `speed` (default 1) accelerates
 -- the virtual clock. `onTick(elapsed, total)` drives the Timeline playhead.
--- Honors the same filterToMe / category options as a real pull.
+-- Honors the same filterToMe / category options as a real pull. Phase-anchored
+-- cues are flattened to absolute (no live triggers exist in preview).
 -- forPlayer: "__all__" = everyone, "<name>" = that player, nil/"" = the live
 -- "only my character" filter (with a whole-plan fallback if it leaves nothing).
 function Scheduler.StartPreview(reminders, boss, speed, onTick, forPlayer)

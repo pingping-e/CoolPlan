@@ -1,13 +1,19 @@
--- CoolPlan v1 plan format: parse + serialize.
+-- CoolPlan plan format: parse + serialize.
 -- Byte-for-byte mirror of the website's lib/export/coolplan-format.ts so plans
 -- round-trip between coolplan.team and this addon. Keep the two in sync.
+--
+-- v1: absolute pull-relative times only. v2 (superset, back-compat): adds an
+-- optional per-encounter @phase table + phase-anchored row times (`pN+M:SS.T`)
+-- for phase-GATED bosses, so the Scheduler can re-anchor each phase live. A plan
+-- with no phase data serializes byte-identically to v1.
 
 local _, ns = ...
 local Format = {}
 ns.Format = Format
 
 local MAGIC = "COOLPLAN"
-local VERSION = 1
+local VERSION = 1          -- baseline (absolute-time)
+local VERSION_PHASED = 2   -- adds @phase table + pN+ anchored times
 Format.VERSION = VERSION
 
 local function trim(s)
@@ -43,6 +49,31 @@ function Format.ParseTime(str)
   return math.floor(n * 1000 + 0.5)
 end
 
+-- A row's time field: "M:SS.T" (absolute) or "pN+M:SS.T" (offset from phase N's
+-- live anchor). Returns ms, phaseIndex (phaseIndex nil when absolute).
+function Format.ParseTimeField(str)
+  str = trim(str)
+  local pidx, rest = str:match("^[pP](%d+)%+(.*)$")
+  if pidx then
+    return Format.ParseTime(rest), tonumber(pidx)
+  end
+  return Format.ParseTime(str), nil
+end
+
+local function serializeTime(ms, phaseIndex)
+  local t = Format.FormatTime(ms)
+  if phaseIndex and phaseIndex > 1 then
+    return "p" .. phaseIndex .. "+" .. t
+  end
+  return t
+end
+
+-- Group rows by phase (major key) then offset, so the document reads in play order.
+local function rowKey(r)
+  local phase = (r.phaseIndex and r.phaseIndex > 1) and r.phaseIndex or 1
+  return phase * 1e9 + (r.timeMs or 0)
+end
+
 local function splitLines(text)
   local out = {}
   for line in (text .. "\n"):gmatch("(.-)\r?\n") do
@@ -62,9 +93,39 @@ local function splitFields(s)
   return t
 end
 
--- plans = { [encounterID] = { name = "...", reminders = { {timeMs, spellId, player, category?, spellName?, alert?}, ... } } }
+-- "@phase ; index ; label ; kind? ; (spellId|pct)? ; occurrence?"
+local function serializePhase(p)
+  local fields = { "@phase", tostring(p.index), sanitize(p.label), "", "", "" }
+  local t = p.trigger
+  if t then
+    fields[4] = t.kind or ""
+    if t.kind == "health" then
+      fields[5] = (t.pct ~= nil) and tostring(t.pct) or ""
+    else
+      fields[5] = (t.spellId ~= nil) and tostring(t.spellId) or ""
+      fields[6] = (t.occurrence ~= nil) and tostring(t.occurrence) or ""
+    end
+  end
+  local n = #fields
+  while n > 3 and fields[n] == "" do n = n - 1 end
+  local row = {}
+  for k = 1, n do row[k] = fields[k] end
+  return table.concat(row, ";")
+end
+
+local function hasPhases(plans)
+  for _, enc in pairs(plans) do
+    if enc.phases and #enc.phases > 0 then return true end
+  end
+  return false
+end
+
+-- plans = { [encounterID] = { name, reminders = { {timeMs, spellId, player, category?, spellName?, alert?, phaseIndex?}, ... },
+--                             boss? = { {timeMs, spellId, type?, spellName?, phaseIndex?}, ... },
+--                             phases? = { {index, label, trigger?={kind, spellId?, occurrence?, pct?}}, ... } } }
 function Format.Serialize(plans, meta)
-  local lines = { MAGIC .. " v" .. VERSION }
+  local version = hasPhases(plans) and VERSION_PHASED or VERSION
+  local lines = { MAGIC .. " v" .. version }
 
   if meta then
     local parts = {}
@@ -84,13 +145,20 @@ function Format.Serialize(plans, meta)
     lines[#lines + 1] = ""
     lines[#lines + 1] = "[encounter] id=" .. id .. "; name=" .. sanitize(enc.name)
 
+    if enc.phases then
+      local ps = {}
+      for _, p in ipairs(enc.phases) do ps[#ps + 1] = p end
+      table.sort(ps, function(a, b) return a.index < b.index end)
+      for _, p in ipairs(ps) do lines[#lines + 1] = serializePhase(p) end
+    end
+
     local rs = {}
     for _, r in ipairs(enc.reminders) do rs[#rs + 1] = r end
-    table.sort(rs, function(a, b) return a.timeMs < b.timeMs end)
+    table.sort(rs, function(a, b) return rowKey(a) < rowKey(b) end)
 
     for _, r in ipairs(rs) do
       local fields = {
-        Format.FormatTime(r.timeMs),
+        serializeTime(r.timeMs, r.phaseIndex),
         tostring(r.spellId),
         sanitize(r.player),
         sanitize(r.category),
@@ -107,9 +175,9 @@ function Format.Serialize(plans, meta)
     if enc.boss then
       local bs = {}
       for _, b in ipairs(enc.boss) do bs[#bs + 1] = b end
-      table.sort(bs, function(a, b) return a.timeMs < b.timeMs end)
+      table.sort(bs, function(a, b) return rowKey(a) < rowKey(b) end)
       for _, b in ipairs(bs) do
-        local fields = { "@boss", Format.FormatTime(b.timeMs), tostring(b.spellId), sanitize(b.type), sanitize(b.spellName) }
+        local fields = { "@boss", serializeTime(b.timeMs, b.phaseIndex), tostring(b.spellId), sanitize(b.type), sanitize(b.spellName) }
         local n = #fields
         while n > 3 and fields[n] == "" do n = n - 1 end
         local row = {}
@@ -134,7 +202,7 @@ function Format.Parse(text)
     return nil, nil, "Not a CoolPlan string (missing 'COOLPLAN v1' header)."
   end
   ver = tonumber(ver)
-  if ver ~= VERSION then
+  if ver ~= VERSION and ver ~= VERSION_PHASED then
     return nil, nil, "Unsupported CoolPlan version: v" .. ver .. "."
   end
 
@@ -159,11 +227,33 @@ function Format.Parse(text)
         plans[tonumber(id)] = current
       else
         local f = splitFields(line)
-        if current and trim(f[1]) == "@boss" then
+        local tag = trim(f[1])
+        if current and tag == "@phase" then
+          -- phase row: @phase | index | label | kind? | (spellId|pct)? | occurrence?
+          local idx = tonumber(f[2])
+          if idx then
+            local phase = { index = idx, label = trim(f[3] or "") }
+            local kind = trim(f[4] or "")
+            if kind == "cast" or kind == "removedebuff" or kind == "health" then
+              local trig = { kind = kind }
+              if kind == "health" then
+                trig.pct = tonumber(f[5])
+              else
+                trig.spellId = tonumber(f[5])
+                trig.occurrence = tonumber(f[6])
+              end
+              phase.trigger = trig
+            end
+            current.phases = current.phases or {}
+            current.phases[#current.phases + 1] = phase
+          end
+        elseif current and tag == "@boss" then
           -- boss ability row: @boss | time | spellId | type? | spellName?
           local sid = tonumber(f[3])
           if sid then
-            local b = { timeMs = Format.ParseTime(f[2]), spellId = sid }
+            local ms, pidx = Format.ParseTimeField(f[2] or "")
+            local b = { timeMs = ms, spellId = sid }
+            if pidx then b.phaseIndex = pidx end
             local ty = trim(f[4] or ""); if ty ~= "" then b.type = ty end
             local bn = trim(f[5] or ""); if bn ~= "" then b.spellName = bn end
             current.boss = current.boss or {}
@@ -172,11 +262,13 @@ function Format.Parse(text)
         elseif #f >= 3 and current then
           local spellId = tonumber(f[2])
           if spellId then
+            local ms, pidx = Format.ParseTimeField(f[1] or "")
             local r = {
-              timeMs = Format.ParseTime(f[1]),
+              timeMs = ms,
               spellId = spellId,
               player = trim(f[3]),
             }
+            if pidx then r.phaseIndex = pidx end
             local cat = trim(f[4] or ""); if cat ~= "" then r.category = cat end
             local sn = trim(f[5] or ""); if sn ~= "" then r.spellName = sn end
             local al = trim(f[6] or ""); if al ~= "" then r.alert = al end

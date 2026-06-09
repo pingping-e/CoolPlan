@@ -243,7 +243,7 @@ end
 -- Add a plan to an encounter. The boss timeline (if any) is stored ON the plan,
 -- so team cooldowns + boss abilities live and die together. Returns the new plan
 -- index, or 0 when there was nothing to store.
-function DB.AddPlan(id, encName, label, reminders, boss)
+function DB.AddPlan(id, encName, label, reminders, boss, phases)
   local lib = CoolPlanCharDB.library
   local e = lib[id]
   if not e then
@@ -277,6 +277,8 @@ function DB.AddPlan(id, encName, label, reminders, boss)
     label = label2,
     reminders = reminders or {},
     boss = hasBoss and boss or nil,
+    -- Phase table (phase-gated bosses) — drives the Scheduler's live re-anchoring.
+    phases = (phases and #phases > 0) and phases or nil,
   }
   e.active = #e.plans -- newly imported becomes active
   return #e.plans
@@ -334,7 +336,7 @@ function DB.ToSerializable(onlyId, onlyIndex)
       -- skip disarmed encounters entirely instead of emitting an empty plan, so
       -- whole-library export/share doesn't ship (and count) blank entries.
       if p then
-        out[id] = { name = e.name, reminders = p.reminders or {}, boss = p.boss }
+        out[id] = { name = e.name, reminders = p.reminders or {}, boss = p.boss, phases = p.phases }
       end
     end
   end

@@ -396,7 +396,7 @@ local function applyPlans(sender, plans)
     or tostring(sender):match("^[^%-]+") or tostring(sender)
   for id, parsed in pairs(plans) do
     local label = "Sent by " .. who
-    local idx = ns.DB.AddPlan(id, parsed.name, label, parsed.reminders, parsed.boss)
+    local idx = ns.DB.AddPlan(id, parsed.name, label, parsed.reminders, parsed.boss, parsed.phases)
     if idx == 0 then bossOnly = bossOnly + 1 else added = added + 1 end
   end
   ns.Print(("|cff66ff66saved %d plan(s) from %s%s.|r"):format(

@@ -147,8 +147,8 @@ function Editor.BuildPage(host)
       local label = typed
       nRem = nRem + (parsed.reminders and #parsed.reminders or 0)
       nBoss = nBoss + (parsed.boss and #parsed.boss or 0)
-      -- boss abilities ride along on the same plan (one body)
-      local idx = ns.DB.AddPlan(id, parsed.name, label, parsed.reminders, parsed.boss)
+      -- boss abilities + phase table ride along on the same plan (one body)
+      local idx = ns.DB.AddPlan(id, parsed.name, label, parsed.reminders, parsed.boss, parsed.phases)
       if idx ~= 0 then added = added + 1 end
     end
     host.nameBox:SetText("")
