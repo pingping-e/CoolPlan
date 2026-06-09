@@ -203,6 +203,11 @@ function Format.Parse(text)
   end
   ver = tonumber(ver)
   if ver ~= VERSION and ver ~= VERSION_PHASED then
+    -- A higher version = a plan from a newer site than this addon supports.
+    -- Tell the user to update rather than showing a bare "unsupported" code.
+    if ver > VERSION_PHASED then
+      return nil, nil, "This plan needs a newer CoolPlan (made for v" .. ver .. "). Please update the addon."
+    end
     return nil, nil, "Unsupported CoolPlan version: v" .. ver .. "."
   end
 
