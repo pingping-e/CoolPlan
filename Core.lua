@@ -134,7 +134,12 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
     local id = tonumber(rest)
     if id then
       if not ns.Scheduler.Start(id) then
-        out("no plan (or no matching reminders) for encounter " .. id .. ".")
+        -- No saved plan: still arm for capture so timestamps are real.
+        if ns.Scheduler.StartCapture(id) then
+          out("encounter " .. id .. ": no plan — armed for CAPTURE ONLY (timestamps tracked). Pull, then /coolplan capture.")
+        else
+          out("could not arm encounter " .. id .. ".")
+        end
       end
     else
       out("usage: /coolplan testenc <encounterID>")

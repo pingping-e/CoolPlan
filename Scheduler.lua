@@ -25,6 +25,18 @@ local driver, pullTime, queue, activeId
 --   phaseTriggers      = { {index, kind, spellId, occurrence, pct, seen, fired}, ... }
 --   hasHealthTrigger   = true if any trigger polls UnitHealth
 local pendingPhase, phaseTriggers, hasHealthTrigger
+-- C_EncounterTimeline sub-phase tracking (drives firePhase on BW-less bosses):
+--   tlAddedAt[id]   = elapsed when that timeline event was ADDED (to measure survival)
+--   tlPhaseSeen     = how many sub-phase ENTRIES we've fired (occurrence order)
+--   tlLastAdvance   = elapsed of the last advance (debounce so one entry fires once)
+local tlAddedAt, tlPhaseSeen, tlLastAdvance
+-- HP / boss-count diagnostic state. logBossHealth is defined AFTER recordCapture
+-- (it calls it), so forward-declare here for tick() and run() to reference.
+local logBossHealth, lastHpLog, lastBossCount
+local TL_MIN_SURVIVE = 4   -- s: a CANCELED event must have lived this long to count
+                            -- as a sub-phase entry (filters instant/0.001s noise)
+local TL_DEBOUNCE = 15      -- s: ignore further entries within this window (one
+                            -- sub-phase fires many state=3s; min real gap is ~30s)
 -- preview mode: a virtual clock advanced by `speed`x each real tick, with an
 -- optional onTick(elapsed, total) callback (used by the Timeline playhead).
 local preview = false
@@ -96,6 +108,29 @@ local function firePhase(index)
   finalizeQueue()
 end
 
+-- C_EncounterTimeline sub-phase advance (for BW-less bosses like Kroluk/Lothraxion,
+-- where BigWigs never fires). The official timeline has no usable info.phase, but a
+-- long-lived rotation event being CANCELED (state=3) reliably marks a sub-phase
+-- ENTRY. We can't read which spellId it is, so we advance phase triggers in
+-- occurrence order: the Nth TL entry fires the Nth sub-phase trigger. firePhase is
+-- idempotent, so on a BigWigs boss this harmlessly re-fires the same index BigWigs
+-- already advanced (the two counters stay in step because each sub-phase produces
+-- exactly one BW message AND one long-event cancel).
+local function timelineAdvancePhase()
+  if not phaseTriggers then return end
+  tlPhaseSeen = (tlPhaseSeen or 0) + 1
+  -- Match the trigger whose OCCURRENCE equals the entry count — not merely the Nth
+  -- trigger. This handles bosses that ignore an early sub-phase: Gemellus models
+  -- only occ 2 (the 50% split); occ 1 is a fixed ~3s split on absolute time. So the
+  -- 1st TL entry finds no occurrence-1 trigger and fires nothing; the 2nd fires occ 2.
+  -- Caveat: a fixed early split too short-lived to pass TL_MIN_SURVIVE won't be
+  -- counted, skewing the tally — such HP-gated bosses are better detected via
+  -- UnitHealth (a 'health' trigger), which is exact and order-independent.
+  for _, tr in ipairs(phaseTriggers) do
+    if (tr.occurrence or 1) == tlPhaseSeen then firePhase(tr.index) end
+  end
+end
+
 -- Health-gated phases: poll boss unit frames; fire when any boss drops to/below
 -- the threshold. Cheap, and only called when a health trigger is pending.
 local function pollHealth()
@@ -128,6 +163,7 @@ local function tick(dt)
   local o = ns.DB.Options()
   if preview then previewClock = previewClock + (dt or 0) * previewSpeed end
   if (not preview) and hasHealthTrigger then pollHealth() end
+  if (not preview) and pullTime then logBossHealth() end
   local elapsed = nowElapsed()
   local lead = o.leadSeconds or 4
 
@@ -226,6 +262,52 @@ local function recordCapture(label, v, name)
   capture[#capture + 1] = { t = nowElapsed(), label = label, v = v, name = name or "?" }
 end
 
+-- HP / boss-count diagnostic (assigns the forward-declared upvalue above). Logs
+-- boss1-5 health (+ whether it's secret) every ~2s, and the boss UNIT COUNT the
+-- instant it changes. Midnight 12.0.5 may mark HP secret/forbidden in instances
+-- (project_midnight_addon_restrictions); the count (1→3→5 on Gemellus) uses only
+-- UnitExists (a basic API) so it may be a more robust split signal than HP or TL.
+function logBossHealth()
+  -- Boss UNIT COUNT change (no throttle — catches the split instant). Gemellus:
+  -- 1 → 3 (occ1) → 5 (occ2 / 50%); boss5 appearing == the 50% split.
+  local count = 0
+  for u = 1, 5 do if UnitExists("boss" .. u) then count = count + 1 end end
+  if count ~= lastBossCount then
+    lastBossCount = count
+    recordCapture("BOSSCOUNT", tostring(count), "(boss unit count)")
+    -- Fire any unitCount-gated phase whose threshold the count just reached
+    -- (Gemellus 50% split = 5 units). UnitExists is readable in Midnight instances
+    -- (HP/spellID are secret), so this is the robust path where HP and TL-occurrence
+    -- both fail. firePhase is idempotent, so re-reaching the count is harmless.
+    if phaseTriggers then
+      for _, tr in ipairs(phaseTriggers) do
+        if (not tr.fired) and tr.unitCount and count >= tr.unitCount then
+          firePhase(tr.index)
+        end
+      end
+    end
+  end
+  local now = nowElapsed()
+  if lastHpLog and (now - lastHpLog) < 2 then return end
+  lastHpLog = now
+  for u = 1, 5 do
+    local unit = "boss" .. u
+    if UnitExists(unit) then
+      local hp = UnitHealth(unit)
+      local mx = UnitHealthMax(unit)
+      local val
+      if issecretvalue and (issecretvalue(hp) or issecretvalue(mx)) then
+        val = "<secret>"
+      elseif type(hp) == "number" and type(mx) == "number" and mx > 0 then
+        val = string.format("%.0f%% (%d/%d)", hp / mx * 100, hp, mx)
+      else
+        val = "hp=" .. tostring(hp) .. " max=" .. tostring(mx)
+      end
+      recordCapture("HP:boss" .. u, val, "(health probe)")
+    end
+  end
+end
+
 -- Feed a spellId (from a boss-mod callback) into phase detection. `fire` acts on
 -- it (an at-the-moment signal); otherwise it's logged only (diagnostics).
 -- Secret / non-number keys (some BigWigs bars, or 12.0 secret values) are
@@ -293,12 +375,29 @@ local function onTimelineEvent(e, a1)
         if ns.debug then ns.Print("|cff00ff00[timeline] PHASE → " .. phase .. "|r") end
       end
     end
+    -- Record the ADDED time so a later Cancel can measure how long the event lived.
+    if phaseTriggers and type(info and info.id) == "number" then
+      tlAddedAt = tlAddedAt or {}
+      tlAddedAt[info.id] = nowElapsed()
+    end
   elseif e == "ENCOUNTER_TIMELINE_EVENT_STATE_CHANGED" then
     local id = a1
     local st = C_EncounterTimeline and C_EncounterTimeline.GetEventState and C_EncounterTimeline.GetEventState(id)
     line = "id=" .. safeVal(id) .. " state=" .. safeVal(st)
+    -- state 3 = Canceled. A long-lived rotation event being canceled marks a
+    -- sub-phase ENTRY (drives firePhase on BW-less bosses). Debounced so the many
+    -- simultaneous cancels of one entry advance the phase only once.
+    if st == 3 and phaseTriggers and tlAddedAt then
+      local at = tlAddedAt[id]
+      local now = nowElapsed()
+      if at and (now - at) >= TL_MIN_SURVIVE and (now - (tlLastAdvance or -999)) >= TL_DEBOUNCE then
+        tlLastAdvance = now
+        timelineAdvancePhase()
+      end
+    end
   elseif e == "ENCOUNTER_TIMELINE_EVENT_REMOVED" then
     line = "id=" .. safeVal(a1)
+    if tlAddedAt and type(a1) == "number" then tlAddedAt[a1] = nil end
   elseif e == "ENCOUNTER_WARNING" then
     local info = a1
     line = "dur=" .. safeVal(info and info.duration) .. " sev=" .. safeVal(info and info.severity)
@@ -380,9 +479,17 @@ end
 local function run(cues, opts)
   Scheduler.Stop()
   local previewMode = opts and opts.preview
+  -- Capture-only arm: a phase boss with no saved plan still sets pullTime so
+  -- /coolplan capture timestamps are real (for trigger curation). No reminders.
+  local captureOnly = opts and opts.captureOnly
 
   wipe(capture) -- fresh capture buffer per pull (for /coolplan capture)
   lastTimelinePhase = nil
+  tlAddedAt = {}
+  tlPhaseSeen = 0
+  tlLastAdvance = nil
+  lastHpLog = nil
+  lastBossCount = nil
   queue = {}
   pendingPhase = nil
   phaseTriggers = nil
@@ -399,7 +506,8 @@ local function run(cues, opts)
       if p.index and p.index > 1 and t and (t.spellId or t.pct) then
         triggers[#triggers + 1] = {
           index = p.index, kind = t.kind, spellId = t.spellId,
-          occurrence = t.occurrence or 1, pct = t.pct, seen = 0, fired = false,
+          occurrence = t.occurrence or 1, pct = t.pct, unitCount = t.unitCount,
+          seen = 0, fired = false,
         }
         if t.kind == "health" then hasHealthTrigger = true end
       end
@@ -439,7 +547,7 @@ local function run(cues, opts)
     end
   end
 
-  if #queue == 0 and not pendingPhase then return false end
+  if #queue == 0 and not pendingPhase and not captureOnly then return false end
   finalizeQueue()
 
   if previewMode then
@@ -561,6 +669,14 @@ function Scheduler.Start(encounterID)
   if #cues == 0 then return false end
   activeId = encounterID
   return run(cues, { phases = plan and plan.phases })
+end
+
+-- Arm WITHOUT a plan, purely to capture boss-mod / Encounter-Timeline events with
+-- real timestamps (trigger curation). Sets pullTime; shows no reminders. Used as
+-- the testenc fallback when a boss has no saved plan yet.
+function Scheduler.StartCapture(encounterID)
+  activeId = encounterID
+  return run({}, { captureOnly = true })
 end
 
 -- Manually fire a phase NOW (testing): isolates the cue display/scheduling path
