@@ -26,17 +26,30 @@ local driver, pullTime, queue, activeId
 --   hasHealthTrigger   = true if any trigger polls UnitHealth
 local pendingPhase, phaseTriggers, hasHealthTrigger
 -- C_EncounterTimeline sub-phase tracking (drives firePhase on BW-less bosses):
---   tlAddedAt[id]   = elapsed when that timeline event was ADDED (to measure survival)
---   tlPhaseSeen     = how many sub-phase ENTRIES we've fired (occurrence order)
---   tlLastAdvance   = elapsed of the last advance (debounce so one entry fires once)
-local tlAddedAt, tlPhaseSeen, tlLastAdvance
+--   tlAddedAt[id]   = elapsed when that timeline event was ADDED (survival fallback)
+--   durById[id]     = the event's info.duration (for dur-signature matching)
+--   tlLastAdvance   = elapsed of the last advance (debounce so one signal fires once)
+--   tlLastSignal    = 'entry' | 'exit' — alternation guard for 5-segment advance
+local tlAddedAt, tlPhaseSeen, tlLastAdvance, durById, tlLastSignal
 -- HP / boss-count diagnostic state. logBossHealth is defined AFTER recordCapture
 -- (it calls it), so forward-declare here for tick() and run() to reference.
 local logBossHealth, lastHpLog, lastBossCount
 local TL_MIN_SURVIVE = 4   -- s: a CANCELED event must have lived this long to count
-                            -- as a sub-phase entry (filters instant/0.001s noise)
-local TL_DEBOUNCE = 15      -- s: ignore further entries within this window (one
+                            -- as a sub-phase entry (survival FALLBACK, no dur sig)
+local TL_DEBOUNCE = 15      -- s: ignore further signals within this window (one
                             -- sub-phase fires many state=3s; min real gap is ~30s)
+-- NSRT-style dur signatures (from /coolplan capture): a boss's MAIN rotation event
+-- durations. A main-dur event CANCELED (state=3) = sub-phase ENTRY; the main-dur set
+-- re-ADDED = sub-phase EXIT (= next main phase). More robust than survival+occurrence
+-- (no occ-skew). Gemellus uses unitCount, L'ura is absolute → not listed here (they
+-- fall back to survival / unitCount). ⚠ IN-GAME UNVERIFIED — tune from a fresh capture.
+local PHASE_DUR_SIGNATURES = {
+  [2564] = { 20, 5, 14 },                      -- Crawth (Gust/Peck/Screech)
+  [3213] = { 25.333, 3, 70, 14.166, 33.5 },    -- Vordaza
+  [3058] = { 1001, 999 },                      -- Kroluk
+  [3333] = { 2, 11, 52, 24 },                  -- Lothraxion
+}
+local DUR_EPSILON = 0.3     -- s: float dur match tolerance (25.333, 14.166 …)
 -- preview mode: a virtual clock advanced by `speed`x each real tick, with an
 -- optional onTick(elapsed, total) callback (used by the Timeline playhead).
 local preview = false
@@ -116,19 +129,25 @@ end
 -- idempotent, so on a BigWigs boss this harmlessly re-fires the same index BigWigs
 -- already advanced (the two counters stay in step because each sub-phase produces
 -- exactly one BW message AND one long-event cancel).
+-- Is this duration one of the active boss's MAIN rotation durations?
+local function isMainDur(dur)
+  local sig = activeId and PHASE_DUR_SIGNATURES[activeId]
+  if not sig or type(dur) ~= "number" then return false end
+  for _, d in ipairs(sig) do if math.abs(dur - d) < DUR_EPSILON then return true end end
+  return false
+end
+
+-- Advance to the next unfired phase (lowest index). The TL signals give the ORDER
+-- of phase transitions (sub-phase entry / exit alternating); we fire them 2→3→4→5
+-- in turn. firePhase is idempotent, so a BigWigs boss re-firing the same index is
+-- harmless. Gemellus (occ-skip / HP-gated) is handled by unitCount, not this.
 local function timelineAdvancePhase()
   if not phaseTriggers then return end
-  tlPhaseSeen = (tlPhaseSeen or 0) + 1
-  -- Match the trigger whose OCCURRENCE equals the entry count — not merely the Nth
-  -- trigger. This handles bosses that ignore an early sub-phase: Gemellus models
-  -- only occ 2 (the 50% split); occ 1 is a fixed ~3s split on absolute time. So the
-  -- 1st TL entry finds no occurrence-1 trigger and fires nothing; the 2nd fires occ 2.
-  -- Caveat: a fixed early split too short-lived to pass TL_MIN_SURVIVE won't be
-  -- counted, skewing the tally — such HP-gated bosses are better detected via
-  -- UnitHealth (a 'health' trigger), which is exact and order-independent.
+  local target
   for _, tr in ipairs(phaseTriggers) do
-    if (tr.occurrence or 1) == tlPhaseSeen then firePhase(tr.index) end
+    if (not tr.fired) and (not target or tr.index < target.index) then target = tr end
   end
+  if target then firePhase(target.index) end
 end
 
 -- Health-gated phases: poll boss unit frames; fire when any boss drops to/below
@@ -375,29 +394,54 @@ local function onTimelineEvent(e, a1)
         if ns.debug then ns.Print("|cff00ff00[timeline] PHASE → " .. phase .. "|r") end
       end
     end
-    -- Record the ADDED time so a later Cancel can measure how long the event lived.
+    -- Record the ADDED time (survival fallback) and the duration (dur signature).
     if phaseTriggers and type(info and info.id) == "number" then
       tlAddedAt = tlAddedAt or {}
       tlAddedAt[info.id] = nowElapsed()
+      if type(info.duration) == "number" then
+        durById = durById or {}
+        durById[info.id] = info.duration
+      end
+    end
+    -- dur-signature EXIT: the MAIN rotation set re-ADDED after a sub-phase means the
+    -- sub-phase ended → next MAIN phase. Only when the previous signal was an entry
+    -- (so the pull's initial main-set ADDED, with no preceding entry, is ignored).
+    if phaseTriggers and tlLastSignal == "entry" and isMainDur(info and info.duration) then
+      local now = nowElapsed()
+      if (now - (tlLastAdvance or -999)) >= TL_DEBOUNCE then
+        tlLastAdvance = now
+        tlLastSignal = "exit"
+        timelineAdvancePhase()
+      end
     end
   elseif e == "ENCOUNTER_TIMELINE_EVENT_STATE_CHANGED" then
     local id = a1
     local st = C_EncounterTimeline and C_EncounterTimeline.GetEventState and C_EncounterTimeline.GetEventState(id)
     line = "id=" .. safeVal(id) .. " state=" .. safeVal(st)
-    -- state 3 = Canceled. A long-lived rotation event being canceled marks a
-    -- sub-phase ENTRY (drives firePhase on BW-less bosses). Debounced so the many
-    -- simultaneous cancels of one entry advance the phase only once.
-    if st == 3 and phaseTriggers and tlAddedAt then
-      local at = tlAddedAt[id]
+    -- state 3 = Canceled. A MAIN rotation event canceled = sub-phase ENTRY. With a
+    -- dur signature we match the canceled event's duration; without one we fall back
+    -- to survival (lived >= TL_MIN_SURVIVE). Debounced + alternated with exits so a
+    -- sub-phase's many simultaneous cancels advance the phase only once.
+    if st == 3 and phaseTriggers then
       local now = nowElapsed()
-      if at and (now - at) >= TL_MIN_SURVIVE and (now - (tlLastAdvance or -999)) >= TL_DEBOUNCE then
+      local sig = activeId and PHASE_DUR_SIGNATURES[activeId]
+      local isEntry
+      if sig then
+        isEntry = isMainDur(durById and durById[id])
+      else
+        local at = tlAddedAt and tlAddedAt[id]
+        isEntry = at ~= nil and (now - at) >= TL_MIN_SURVIVE
+      end
+      if isEntry and tlLastSignal ~= "entry" and (now - (tlLastAdvance or -999)) >= TL_DEBOUNCE then
         tlLastAdvance = now
+        tlLastSignal = "entry"
         timelineAdvancePhase()
       end
     end
   elseif e == "ENCOUNTER_TIMELINE_EVENT_REMOVED" then
     line = "id=" .. safeVal(a1)
     if tlAddedAt and type(a1) == "number" then tlAddedAt[a1] = nil end
+    if durById and type(a1) == "number" then durById[a1] = nil end
   elseif e == "ENCOUNTER_WARNING" then
     local info = a1
     line = "dur=" .. safeVal(info and info.duration) .. " sev=" .. safeVal(info and info.severity)
@@ -486,8 +530,10 @@ local function run(cues, opts)
   wipe(capture) -- fresh capture buffer per pull (for /coolplan capture)
   lastTimelinePhase = nil
   tlAddedAt = {}
+  durById = {}
   tlPhaseSeen = 0
   tlLastAdvance = nil
+  tlLastSignal = nil
   lastHpLog = nil
   lastBossCount = nil
   queue = {}
