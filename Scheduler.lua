@@ -34,7 +34,7 @@ local pendingPhase, phaseTriggers, hasHealthTrigger
 local tlAddedAt, tlPhaseSeen, tlLastAdvance, durById, tlLastSignal, tlCursor
 -- HP / boss-count diagnostic state. logBossHealth is defined AFTER recordCapture
 -- (it calls it), so forward-declare here for tick() and run() to reference.
-local logBossHealth, lastHpLog, lastBossCount
+local logBossHealth, lastHpLog, lastBossCount, recordCapture
 local TL_MIN_SURVIVE = 4   -- s: a CANCELED event must have lived this long to count
                             -- as a sub-phase entry (survival FALLBACK, no dur sig)
 local TL_DEBOUNCE = 8       -- s: ignore further signals within this window. Its only
@@ -186,13 +186,25 @@ end
 -- twice in a row, and debounced so a boundary's burst of simultaneous events (a whole
 -- rotation set canceled / re-added at once) advances the phase only once.
 local function tlEntry(now)
-  if tlLastSignal ~= "entry" and (now - (tlLastAdvance or -999)) >= TL_DEBOUNCE then
+  local ok = tlLastSignal ~= "entry" and (now - (tlLastAdvance or -999)) >= TL_DEBOUNCE
+  if ns.debug then
+    local msg = "id=" .. tostring(activeId) .. " sig=" .. tostring(tlLastSignal) .. " cursor=" .. tostring(tlCursor) .. " → " .. (ok and "FIRE" or "skip")
+    if recordCapture then recordCapture("tl:ENTRY?", msg, "") end
+    ns.Print("|cffaaaaaa[tl] ENTRY @" .. string.format("%.1f", now) .. "s " .. msg .. "|r")
+  end
+  if ok then
     tlLastAdvance, tlLastSignal = now, "entry"
     timelineAdvancePhase()
   end
 end
 local function tlExit(now)
-  if tlLastSignal == "entry" and (now - (tlLastAdvance or -999)) >= TL_DEBOUNCE then
+  local ok = tlLastSignal == "entry" and (now - (tlLastAdvance or -999)) >= TL_DEBOUNCE
+  if ns.debug then
+    local msg = "id=" .. tostring(activeId) .. " sig=" .. tostring(tlLastSignal) .. " cursor=" .. tostring(tlCursor) .. " → " .. (ok and "FIRE" or "skip")
+    if recordCapture then recordCapture("tl:EXIT?", msg, "") end
+    ns.Print("|cffaaaaaa[tl] EXIT @" .. string.format("%.1f", now) .. "s " .. msg .. "|r")
+  end
+  if ok then
     tlLastAdvance, tlLastSignal = now, "exit"
     timelineAdvancePhase()
   end
@@ -324,7 +336,7 @@ local BOSSMOD_DEBOUNCE = 3 -- seconds: collapse the several bar/message/timer
 -- pull in run().
 local capture = {}
 local lastTimelinePhase -- last Encounter-Timeline info.phase seen (diagnostic)
-local function recordCapture(label, v, name)
+function recordCapture(label, v, name)
   if #capture >= 400 then return end
   capture[#capture + 1] = { t = nowElapsed(), label = label, v = v, name = name or "?" }
 end
@@ -578,7 +590,12 @@ end
 -- opts (optional): { preview=true, speed=1, onTick=fn } for the live preview,
 -- and { phases = {...} } (live only) to enable phase re-anchoring.
 local function run(cues, opts)
+  -- Callers set `activeId` just before calling run(); Stop() clears it, so save and
+  -- restore it across the cleanup. Without this, activeId is nil for the whole pull and
+  -- every per-encounter table lookup (PHASE_DUR_SIGNATURES / PHASE_ENTRY_WARN) misses.
+  local keepActiveId = activeId
   Scheduler.Stop()
+  activeId = keepActiveId
   local previewMode = opts and opts.preview
   -- Capture-only arm: a phase boss with no saved plan still sets pullTime so
   -- /coolplan capture timestamps are real (for trigger curation). No reminders.
@@ -622,6 +639,10 @@ local function run(cues, opts)
     end
     if #triggers > 0 then phaseTriggers = triggers end
     if ns.debug and phaseTriggers then
+      recordCapture("tl:ARMED", "activeId=" .. tostring(activeId)
+        .. " warnEntry=" .. tostring(PHASE_ENTRY_WARN[activeId] ~= nil)
+        .. " durSig=" .. tostring(PHASE_DUR_SIGNATURES[activeId] ~= nil)
+        .. " triggers=" .. #phaseTriggers, "")
       local ids = {}
       for _, tr in ipairs(phaseTriggers) do
         ids[#ids + 1] = "p" .. tr.index .. "=" .. tostring(tr.kind) .. ":" .. tostring(tr.spellId or tr.pct) .. "x" .. tostring(tr.occurrence or 1)
@@ -781,10 +802,14 @@ end
 
 -- Arm WITHOUT a plan, purely to capture boss-mod / Encounter-Timeline events with
 -- real timestamps (trigger curation). Sets pullTime; shows no reminders. Used as
--- the testenc fallback when a boss has no saved plan yet.
+-- the testenc fallback when a boss has no saved plan yet. Arms BARE phase slots
+-- (p2..p7, no cues) so the live TL/warning detection can still advance and LOG
+-- "phase N fired" — letting you verify 2→3→4→5 detection without importing a plan.
 function Scheduler.StartCapture(encounterID)
   activeId = encounterID
-  return run({}, { captureOnly = true })
+  local phases = {}
+  for i = 2, 7 do phases[#phases + 1] = { index = i, trigger = { kind = "cast" } } end
+  return run({}, { captureOnly = true, phases = phases })
 end
 
 -- Manually fire a phase NOW (testing): isolates the cue display/scheduling path
