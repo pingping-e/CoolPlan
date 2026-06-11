@@ -90,10 +90,10 @@ local previewClock = 0
 local previewSpeed = 1
 local previewTotal = 0
 local previewOnTick = nil
--- Preview has no live phase timing, so phase-anchored cues are laid out on a synthetic
--- clock: each phase index starts this many seconds after the pull, then the cue's own
--- offset is added. Keeps every phase's cues visible and ordered (instead of stacking
--- them all at their raw pN offset, which froze the bar at the first cue's time).
+local previewPhaseStart = nil  -- {[phaseIndex]=startMs}: synthetic phase windows (preview)
+-- Preview has no live phase timing. The Timeline view passes its own per-phase start
+-- offsets (opts.phaseStart) so the playhead/markers/HUD share one layout; this constant
+-- is only a FALLBACK (seconds per phase) when a caller arms a preview without one.
 local PREVIEW_PHASE_GAP = 30
 
 local function nameMatchesMe(player)
@@ -147,6 +147,20 @@ local function firePhase(index)
   if phaseTriggers then
     for _, tr in ipairs(phaseTriggers) do
       if tr.index == index then tr.fired = true end
+    end
+  end
+  -- A new phase began: any still-pending cue scheduled for an EARLIER phase is now
+  -- stale (that phase is over) and must NOT fire during this one. Drop un-cast queued
+  -- cues from every earlier phase. In a phased plan, absolute (no-pN) cues ARE phase 1
+  -- — `phaseIndex or 1` — so they're dropped too once we leave phase 1 (e.g. the boss
+  -- hit the sub-phase early, before all of phase 1's cooldowns came up).
+  if index and index > 1 and queue then
+    local now = nowElapsed()
+    for i = #queue, 1, -1 do
+      local q = queue[i].cue
+      if q and (q.phaseIndex or 1) < index and queue[i].castAt > now then
+        table.remove(queue, i)
+      end
     end
   end
   if ns.debug then ns.Print("|cff66ff66CoolPlan phase " .. index .. " fired @ " .. string.format("%.1f", nowElapsed()) .. "s — scheduling " .. (pend and #pend or 0) .. " cue(s)|r") end
@@ -256,32 +270,47 @@ local function tick(dt)
   local soonest, soonestItem = nil, nil  -- nearest still-upcoming cast (for the countdown)
 
   for _, item in ipairs(queue) do
-    local remaining = item.castAt - elapsed
-
-    -- audible cue (sound / TTS) fires once when the SOUND lead window opens —
-    -- independent of the on-screen lead so audio can lead/trail the visuals.
-    if (not item.soundCued) and elapsed >= item.soundAt then
-      item.soundCued = true
-      ns.Reminders.Cue(item.cue, o)
+    -- preview: a cue is only "live" during its OWN synthetic phase window. Before its
+    -- phase starts it isn't visible; once the NEXT phase starts the live addon would
+    -- have dropped it (firePhase). Skip otherwise so the Test mirrors the real per-phase
+    -- visibility instead of showing every phase's cues at once.
+    local visible = true
+    if preview and previewPhaseStart then
+      local pidx = (item.cue and item.cue.phaseIndex) or 1
+      local startN = (previewPhaseStart[pidx] or 0) / 1000
+      local nextMs = previewPhaseStart[pidx + 1]
+      if previewClock < startN or (nextMs and previewClock >= nextMs / 1000) then
+        visible = false
+      end
     end
+    if visible then
+      local remaining = item.castAt - elapsed
 
-    -- track the single nearest upcoming cast in this same pass (the countdown
-    -- below speaks only that one, so it doesn't need its own queue scan).
-    if remaining > 0 and ((not soonest) or remaining < soonest) then
-      soonest, soonestItem = remaining, item
-    end
+      -- audible cue (sound / TTS) fires once when the SOUND lead window opens —
+      -- independent of the on-screen lead so audio can lead/trail the visuals.
+      if (not item.soundCued) and elapsed >= item.soundAt then
+        item.soundCued = true
+        ns.Reminders.Cue(item.cue, o)
+      end
 
-    if elapsed >= item.showAt and elapsed <= item.castAt + LINGER then
-      -- in the anticipation window: nearest cast becomes the big alert,
-      -- any others fall into the queue
-      if (not active) or remaining < active.remaining then
-        if active then upcoming[#upcoming + 1] = { cue = active.cue, remaining = active.remaining } end
-        active = { cue = item.cue, remaining = remaining, total = lead }
-      else
+      -- track the single nearest upcoming cast in this same pass (the countdown
+      -- below speaks only that one, so it doesn't need its own queue scan).
+      if remaining > 0 and ((not soonest) or remaining < soonest) then
+        soonest, soonestItem = remaining, item
+      end
+
+      if elapsed >= item.showAt and elapsed <= item.castAt + LINGER then
+        -- in the anticipation window: nearest cast becomes the big alert,
+        -- any others fall into the queue
+        if (not active) or remaining < active.remaining then
+          if active then upcoming[#upcoming + 1] = { cue = active.cue, remaining = active.remaining } end
+          active = { cue = item.cue, remaining = remaining, total = lead }
+        else
+          upcoming[#upcoming + 1] = { cue = item.cue, remaining = remaining }
+        end
+      elseif remaining > 0 then
         upcoming[#upcoming + 1] = { cue = item.cue, remaining = remaining }
       end
-    elseif remaining > 0 then
-      upcoming[#upcoming + 1] = { cue = item.cue, remaining = remaining }
     end
   end
 
@@ -677,9 +706,12 @@ local function run(cues, opts)
       -- absolute (or a phase with no usable trigger → best-effort offset-from-pull)
       local castAt = c.timeMs / 1000
       if previewMode and pidx and pidx > 1 then
-        -- no real phase timing in preview → spread phases on a synthetic clock so each
-        -- phase's cues show in order (else every pN+offset cue stacks at `offset`)
-        castAt = (pidx - 1) * PREVIEW_PHASE_GAP + c.timeMs / 1000
+        -- No real phase timing in preview. Use the SAME sequential layout the Timeline
+        -- canvas draws its markers with (opts.phaseStart, ms), so the playhead, the
+        -- icons, and the HUD line up. Fall back to a fixed gap if none was passed.
+        local ps = opts and opts.phaseStart
+        local baseMs = (ps and ps[pidx]) or ((pidx - 1) * PREVIEW_PHASE_GAP * 1000)
+        castAt = (baseMs + c.timeMs) / 1000
       end
       enqueue(c, castAt)
       if castAt > maxCast then maxCast = castAt end
@@ -695,6 +727,7 @@ local function run(cues, opts)
     previewSpeed = opts.speed or 1
     previewTotal = maxCast
     previewOnTick = opts.onTick
+    previewPhaseStart = opts.phaseStart
     pullTime = nil
   else
     pullTime = GetTime()
@@ -851,6 +884,7 @@ function Scheduler.Stop()
   queue, pullTime, activeId = nil, nil, nil
   pendingPhase, phaseTriggers, hasHealthTrigger = nil, nil, false
   preview, previewClock, previewSpeed, previewTotal, previewOnTick = false, 0, 1, 0, nil
+  previewPhaseStart = nil
   if ns.Reminders then ns.Reminders.Clear() end
 end
 
@@ -861,7 +895,7 @@ end
 -- cues are flattened to absolute (no live triggers exist in preview).
 -- forPlayer: "__all__" = everyone, "<name>" = that player, nil/"" = the live
 -- "only my character" filter (with a whole-plan fallback if it leaves nothing).
-function Scheduler.StartPreview(reminders, boss, speed, onTick, forPlayer)
+function Scheduler.StartPreview(reminders, boss, speed, onTick, forPlayer, phaseStart)
   local cues
   if forPlayer == "__all__" then
     cues = buildCues(reminders or {}, boss, true)
@@ -873,7 +907,7 @@ function Scheduler.StartPreview(reminders, boss, speed, onTick, forPlayer)
   end
   if #cues == 0 then return false end
   activeId = -2
-  return run(cues, { preview = true, speed = speed or 1, onTick = onTick })
+  return run(cues, { preview = true, speed = speed or 1, onTick = onTick, phaseStart = phaseStart })
 end
 
 function Scheduler.IsPreview()

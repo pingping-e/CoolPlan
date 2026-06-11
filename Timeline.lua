@@ -153,6 +153,41 @@ local function currentNote()
   return e, p
 end
 
+-- The preview has no live boss, so phase-anchored cues (timeMs is an OFFSET from
+-- phase N's live start) can't be placed at a real pull time. Lay the phases out
+-- SEQUENTIALLY: phase 1 at its absolute times, each later phase starting just after
+-- the previous phase's content + a gap. SHARED by the canvas markers AND the Test
+-- playback (Scheduler preview) so the playhead, the icons, and the HUD all use the
+-- SAME synthetic times. (The live addon re-anchors each phase to the real trigger.)
+local PHASE_GAP_MS = 4000
+local function phaseOf(item) return (item.phaseIndex and item.phaseIndex > 1) and item.phaseIndex or 1 end
+local function computePhaseStart(reminders, boss, phases)
+  local maxPhase = 1
+  for _, ph in ipairs(phases or {}) do if ph.index and ph.index > maxPhase then maxPhase = ph.index end end
+  for _, r in ipairs(reminders or {}) do local q = phaseOf(r); if q > maxPhase then maxPhase = q end end
+  for _, b in ipairs(boss or {}) do local q = phaseOf(b); if q > maxPhase then maxPhase = q end end
+  local maxLocal = {}
+  local function noteLocal(item) local q = phaseOf(item); if (item.timeMs or 0) > (maxLocal[q] or 0) then maxLocal[q] = item.timeMs or 0 end end
+  for _, r in ipairs(reminders or {}) do noteLocal(r) end
+  for _, b in ipairs(boss or {}) do noteLocal(b) end
+  local phaseStart = { [1] = 0 }
+  for n = 2, maxPhase do phaseStart[n] = phaseStart[n - 1] + (maxLocal[n - 1] or 0) + PHASE_GAP_MS end
+  return phaseStart, maxPhase
+end
+
+-- Short axis tag for a phase boundary: "Phase 2 (…)" → P2, "Sub-phase 1 (…)" → S1
+-- (NSRT calls these intermissions; S = sub reads clearer next to P = main phase).
+-- Anything else falls back to the raw phase index (p3).
+local function shortPhaseLabel(index, label)
+  if type(label) == "string" then
+    local n = label:match("^[Ss]ub%-?phase%s*(%d+)")
+    if n then return "S" .. n end
+    n = label:match("^[Pp]hase%s*(%d+)")
+    if n then return "P" .. n end
+  end
+  return "p" .. tostring(index)
+end
+
 -- ── render the timeline canvas ───────────────────────────────────────────────
 local function renderCanvas()
   local e, p = currentNote()
@@ -160,24 +195,7 @@ local function renderCanvas()
   local boss = (p and p.boss) or {}
   local phases = (p and p.phases) or {}
 
-  -- The preview has no live boss, so phase-anchored cues (timeMs is an OFFSET
-  -- from phase N's live start) can't be placed at a real pull time. Lay the
-  -- phases out SEQUENTIALLY: phase 1 at its absolute times, each later phase
-  -- starting just after the previous phase's content. displayTime() maps a cue
-  -- onto that layout so the timeline reads in play order. (The live addon
-  -- re-anchors each phase to the real trigger; this is only the static preview.)
-  local PHASE_GAP_MS = 4000
-  local function phaseOf(item) return (item.phaseIndex and item.phaseIndex > 1) and item.phaseIndex or 1 end
-  local maxPhase = 1
-  for _, ph in ipairs(phases) do if ph.index and ph.index > maxPhase then maxPhase = ph.index end end
-  for _, r in ipairs(reminders) do local q = phaseOf(r); if q > maxPhase then maxPhase = q end end
-  for _, b in ipairs(boss) do local q = phaseOf(b); if q > maxPhase then maxPhase = q end end
-  local maxLocal = {}
-  local function noteLocal(item) local q = phaseOf(item); if (item.timeMs or 0) > (maxLocal[q] or 0) then maxLocal[q] = item.timeMs or 0 end end
-  for _, r in ipairs(reminders) do noteLocal(r) end
-  for _, b in ipairs(boss) do noteLocal(b) end
-  local phaseStart = { [1] = 0 }
-  for n = 2, maxPhase do phaseStart[n] = phaseStart[n - 1] + (maxLocal[n - 1] or 0) + PHASE_GAP_MS end
+  local phaseStart, maxPhase = computePhaseStart(reminders, boss, phases)
   local function displayTime(item) return (phaseStart[phaseOf(item)] or 0) + (item.timeMs or 0) end
 
   -- compute time extent (in the sequential display layout)
@@ -321,13 +339,15 @@ local function renderCanvas()
       t:SetPoint("BOTTOMLEFT", canvas, "TOPLEFT", x, gridBottom)
       t:SetColorTexture(0.70, 0.52, 1, 0.65)
       t:Show()
-      local lbl = "P" .. n
-      for _, ph in ipairs(phases) do if ph.index == n then lbl = (ph.label and ph.label ~= "" and ph.label) or lbl; break end end
+      local plabel
+      for _, ph in ipairs(phases) do if ph.index == n then plabel = ph.label; break end end
+      -- Short tag in the TIME-AXIS strip (top), not on the bars — the full label sat
+      -- over the cue icons and was unreadable. y = -2 puts it on the axis row.
       axisIndex = axisIndex + 1
       local a = getAxis(axisIndex)
       a:ClearAllPoints()
-      a:SetPoint("TOPLEFT", canvas, "TOPLEFT", x + 2, gridTop - 12)
-      a:SetText("|cffb38cff" .. lbl .. "|r")
+      a:SetPoint("TOPLEFT", canvas, "TOPLEFT", x + 1, -2)
+      a:SetText("|cffb38cff" .. shortPhaseLabel(n, plabel) .. "|r")
       a:Show()
     end
   end
@@ -386,8 +406,10 @@ local function startTest(speed)
     if status then status:SetText("|cffff8888No note selected.|r") end
     return
   end
+  -- Same sequential phase layout the canvas markers use, so the playhead/HUD align.
+  local phaseStart = computePhaseStart(p.reminders or {}, p.boss or {}, p.phases or {})
   local ok = ns.Scheduler.StartPreview(p.reminders, p.boss, speed,
-    function(elapsed) setPlayhead(elapsed) end, selPreviewAs)
+    function(elapsed) setPlayhead(elapsed) end, selPreviewAs, phaseStart)
   if not ok then
     if status then status:SetText("|cffffcc00Nothing to play — this note has no cooldowns. Pick another boss / note above.|r") end
     return
