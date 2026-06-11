@@ -90,6 +90,11 @@ local previewClock = 0
 local previewSpeed = 1
 local previewTotal = 0
 local previewOnTick = nil
+-- Preview has no live phase timing, so phase-anchored cues are laid out on a synthetic
+-- clock: each phase index starts this many seconds after the pull, then the cue's own
+-- offset is added. Keeps every phase's cues visible and ordered (instead of stacking
+-- them all at their raw pN offset, which froze the bar at the first cue's time).
+local PREVIEW_PHASE_GAP = 30
 
 local function nameMatchesMe(player)
   if not player or player == "" then return true end
@@ -671,6 +676,11 @@ local function run(cues, opts)
     else
       -- absolute (or a phase with no usable trigger → best-effort offset-from-pull)
       local castAt = c.timeMs / 1000
+      if previewMode and pidx and pidx > 1 then
+        -- no real phase timing in preview → spread phases on a synthetic clock so each
+        -- phase's cues show in order (else every pN+offset cue stacks at `offset`)
+        castAt = (pidx - 1) * PREVIEW_PHASE_GAP + c.timeMs / 1000
+      end
       enqueue(c, castAt)
       if castAt > maxCast then maxCast = castAt end
     end
