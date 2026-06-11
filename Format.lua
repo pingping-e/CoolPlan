@@ -93,18 +93,19 @@ local function splitFields(s)
   return t
 end
 
--- "@phase ; index ; label ; kind? ; (spellId|pct)? ; occurrence?"
+-- "@phase ; index ; label ; kind? ; (spellId|pct)? ; occurrence? ; unitCount?"
 local function serializePhase(p)
-  local fields = { "@phase", tostring(p.index), sanitize(p.label), "", "", "" }
+  local fields = { "@phase", tostring(p.index), sanitize(p.label), "", "", "", "" }
   local t = p.trigger
   if t then
     fields[4] = t.kind or ""
     if t.kind == "health" then
       fields[5] = (t.pct ~= nil) and tostring(t.pct) or ""
-    else
+    elseif t.kind ~= "rotation-resume" then
       fields[5] = (t.spellId ~= nil) and tostring(t.spellId) or ""
       fields[6] = (t.occurrence ~= nil) and tostring(t.occurrence) or ""
     end
+    if t.unitCount ~= nil then fields[7] = tostring(t.unitCount) end
   end
   local n = #fields
   while n > 3 and fields[n] == "" do n = n - 1 end
@@ -239,14 +240,18 @@ function Format.Parse(text)
           if idx then
             local phase = { index = idx, label = trim(f[3] or "") }
             local kind = trim(f[4] or "")
-            if kind == "cast" or kind == "removedebuff" or kind == "applybuff" or kind == "health" then
+            if kind == "cast" or kind == "removedebuff" or kind == "applybuff"
+               or kind == "removebuff" or kind == "rotation-resume" or kind == "interrupt"
+               or kind == "health" then
               local trig = { kind = kind }
               if kind == "health" then
                 trig.pct = tonumber(f[5])
-              else
+              elseif kind ~= "rotation-resume" then
+                -- rotation-resume carries no spellId — detected live via the timeline.
                 trig.spellId = tonumber(f[5])
                 trig.occurrence = tonumber(f[6])
               end
+              trig.unitCount = tonumber(f[7])
               phase.trigger = trig
             end
             current.phases = current.phases or {}

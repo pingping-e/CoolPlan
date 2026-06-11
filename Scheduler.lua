@@ -30,26 +30,59 @@ local pendingPhase, phaseTriggers, hasHealthTrigger
 --   durById[id]     = the event's info.duration (for dur-signature matching)
 --   tlLastAdvance   = elapsed of the last advance (debounce so one signal fires once)
 --   tlLastSignal    = 'entry' | 'exit' — alternation guard for 5-segment advance
-local tlAddedAt, tlPhaseSeen, tlLastAdvance, durById, tlLastSignal
+--   tlCursor        = index into phaseTriggers; the next phase a TL signal fires
+local tlAddedAt, tlPhaseSeen, tlLastAdvance, durById, tlLastSignal, tlCursor
 -- HP / boss-count diagnostic state. logBossHealth is defined AFTER recordCapture
 -- (it calls it), so forward-declare here for tick() and run() to reference.
 local logBossHealth, lastHpLog, lastBossCount
 local TL_MIN_SURVIVE = 4   -- s: a CANCELED event must have lived this long to count
                             -- as a sub-phase entry (survival FALLBACK, no dur sig)
-local TL_DEBOUNCE = 15      -- s: ignore further signals within this window (one
-                            -- sub-phase fires many state=3s; min real gap is ~30s)
+local TL_DEBOUNCE = 8       -- s: ignore further signals within this window. Its only
+                            -- job is to collapse a boundary's burst of simultaneous
+                            -- events (<1s apart) into one advance — the entry/exit
+                            -- alternation already prevents same-type repeats. Kept
+                            -- BELOW the shortest real sub-phase (Crawth fight 2564 sub-
+                            -- phase 1 was ~14s entry→exit; 15s would have eaten its
+                            -- exit and mis-anchored to the next rotation cycle).
 -- NSRT-style dur signatures (from /coolplan capture): a boss's MAIN rotation event
 -- durations. A main-dur event CANCELED (state=3) = sub-phase ENTRY; the main-dur set
 -- re-ADDED = sub-phase EXIT (= next main phase). More robust than survival+occurrence
 -- (no occ-skew). Gemellus uses unitCount, L'ura is absolute → not listed here (they
--- fall back to survival / unitCount). ⚠ IN-GAME UNVERIFIED — tune from a fresh capture.
+-- fall back to survival / unitCount). Crawth (2564) reuses its rotation dur during the
+-- sub-phase, so its ENTRY comes from PHASE_ENTRY_WARN instead (the dur sig here
+-- still drives its exit). ✓ ALL FOUR VERIFIED in-game (2026-06-11/12): 3058 Kroluk &
+-- 3213 Vordaza use a signature dur going state=3 for ENTRY (Vordaza's dur=70 cancels at
+-- the Deathshroud entry); 2564 Crawth & 3333 Lothraxion are warning-gated (PHASE_ENTRY_
+-- WARN) so their signature is EXIT-ONLY (the rotation set re-ADDED ends the sub-phase).
 local PHASE_DUR_SIGNATURES = {
   [2564] = { 20, 5, 14 },                      -- Crawth (Gust/Peck/Screech)
   [3213] = { 25.333, 3, 70, 14.166, 33.5 },    -- Vordaza
-  [3058] = { 1001, 999 },                      -- Kroluk
+  [3058] = { 1001, 999, 1004 },                -- Kroluk: long "main rotation" bars.
+  -- VERIFIED 2026-06-11 (in-game capture, fight 3058): the main-phase bars are
+  -- always freshly ADDED at exactly {1001, 999, 1004}; they go state=3 at each
+  -- sub-phase ENTRY and re-ADD at the EXIT. The 952-998 values seen in the capture
+  -- are transient "remaining-time" snapshots at the boundary — deliberately NOT
+  -- listed (an exact match avoids false EXIT fires right after an entry).
   [3333] = { 2, 11, 52, 24 },                  -- Lothraxion
 }
 local DUR_EPSILON = 0.3     -- s: float dur match tolerance (25.333, 14.166 …)
+-- Warning-gated ENTRY. Some bosses don't surface a clean sub-phase CANCEL on a signature
+-- duration, but DO herald the sub-phase with an ENCOUNTER_WARNING. `sev` = minimum
+-- severity; optional `dur` pins the warning's own duration when severity alone doesn't
+-- disambiguate. For these bosses the warning is the SOLE entry signal — the state=3 entry
+-- path is suppressed (their signature durations also CANCEL as routine/exit churn, which
+-- must not count as an entry). The signature is kept for the EXIT (rotation set re-ADDED).
+--   Crawth (2564): Ruinous Winds = sev 2; routine telegraphs are sev 1, so sev alone
+--     suffices. VERIFIED 2026-06-11: sub-phase warnings at 50.6s / 112.6s (both subs).
+--   Lothraxion (3333): Divine Guile = a sev-2 warning of dur 3.5, but ROUTINE telegraphs
+--     are ALSO sev 2 (dur 3) — so the 3.5 duration is the discriminator. VERIFIED
+--     2026-06-12 (two captures): dur=3.5 sev=2 precedes each sub-phase (player: ~52-53s
+--     cycle, the actual mechanic begins ~9.5s later = cast 7.5s + ~2s); routine dur=3
+--     sev=2 warnings are correctly excluded; exit = rotation set {2,11,52,24} re-ADDED.
+local PHASE_ENTRY_WARN = {
+  [2564] = { sev = 2 },              -- Crawth: severity alone (routine = sev 1)
+  [3333] = { sev = 2, dur = 3.5 },   -- Lothraxion: routine warnings are also sev 2 (dur 3)
+}
 -- preview mode: a virtual clock advanced by `speed`x each real tick, with an
 -- optional onTick(elapsed, total) callback (used by the Timeline playhead).
 local preview = false
@@ -121,14 +154,11 @@ local function firePhase(index)
   finalizeQueue()
 end
 
--- C_EncounterTimeline sub-phase advance (for BW-less bosses like Kroluk/Lothraxion,
--- where BigWigs never fires). The official timeline has no usable info.phase, but a
--- long-lived rotation event being CANCELED (state=3) reliably marks a sub-phase
--- ENTRY. We can't read which spellId it is, so we advance phase triggers in
--- occurrence order: the Nth TL entry fires the Nth sub-phase trigger. firePhase is
--- idempotent, so on a BigWigs boss this harmlessly re-fires the same index BigWigs
--- already advanced (the two counters stay in step because each sub-phase produces
--- exactly one BW message AND one long-event cancel).
+-- C_EncounterTimeline sub-phase advance (for BW-less bosses). The official timeline
+-- has no usable info.phase; instead we read the entry/exit signals (a main rotation
+-- event CANCELED / re-ADDED, or a high-severity warning) and walk the phase triggers
+-- in order. We can't read which spellId each signal is, so the Nth signal fires the
+-- Nth phase trigger (see timelineAdvancePhase's cursor).
 -- Is this duration one of the active boss's MAIN rotation durations?
 local function isMainDur(dur)
   local sig = activeId and PHASE_DUR_SIGNATURES[activeId]
@@ -137,17 +167,35 @@ local function isMainDur(dur)
   return false
 end
 
--- Advance to the next unfired phase (lowest index). The TL signals give the ORDER
--- of phase transitions (sub-phase entry / exit alternating); we fire them 2→3→4→5
--- in turn. firePhase is idempotent, so a BigWigs boss re-firing the same index is
--- harmless. Gemellus (occ-skip / HP-gated) is handled by unitCount, not this.
+-- Advance to the NEXT phase in plan order. The TL signals give the ORDER of phase
+-- transitions (sub-phase entry / exit alternating); we walk phaseTriggers 2→3→4→5
+-- in turn via an independent cursor — NOT "lowest unfired". That distinction matters
+-- when BigWigs is also running: BW fires the entry phases (e.g. Crawth p2/p4) directly
+-- via bossModSpell, marking them fired; a "lowest unfired" walk would then make the
+-- NEXT TL signal skip ahead to the exit phase at the entry's time. The cursor is immune
+-- — firePhase is idempotent, so BW's pre-fire of a phase the cursor also reaches is
+-- harmless. Gemellus (HP-gated) is handled by unitCount, not this.
 local function timelineAdvancePhase()
   if not phaseTriggers then return end
-  local target
-  for _, tr in ipairs(phaseTriggers) do
-    if (not tr.fired) and (not target or tr.index < target.index) then target = tr end
+  tlCursor = (tlCursor or 0) + 1
+  local tr = phaseTriggers[tlCursor]
+  if tr then firePhase(tr.index) end
+end
+
+-- Sub-phase ENTRY / EXIT signals, alternated (tlLastSignal) so an entry can't fire
+-- twice in a row, and debounced so a boundary's burst of simultaneous events (a whole
+-- rotation set canceled / re-added at once) advances the phase only once.
+local function tlEntry(now)
+  if tlLastSignal ~= "entry" and (now - (tlLastAdvance or -999)) >= TL_DEBOUNCE then
+    tlLastAdvance, tlLastSignal = now, "entry"
+    timelineAdvancePhase()
   end
-  if target then firePhase(target.index) end
+end
+local function tlExit(now)
+  if tlLastSignal == "entry" and (now - (tlLastAdvance or -999)) >= TL_DEBOUNCE then
+    tlLastAdvance, tlLastSignal = now, "exit"
+    timelineAdvancePhase()
+  end
 end
 
 -- Health-gated phases: poll boss unit frames; fire when any boss drops to/below
@@ -404,15 +452,11 @@ local function onTimelineEvent(e, a1)
       end
     end
     -- dur-signature EXIT: the MAIN rotation set re-ADDED after a sub-phase means the
-    -- sub-phase ended → next MAIN phase. Only when the previous signal was an entry
-    -- (so the pull's initial main-set ADDED, with no preceding entry, is ignored).
-    if phaseTriggers and tlLastSignal == "entry" and isMainDur(info and info.duration) then
-      local now = nowElapsed()
-      if (now - (tlLastAdvance or -999)) >= TL_DEBOUNCE then
-        tlLastAdvance = now
-        tlLastSignal = "exit"
-        timelineAdvancePhase()
-      end
+    -- sub-phase ended → next MAIN phase. tlExit only fires while the previous signal
+    -- was an entry, so the pull's initial main-set ADDED (and every normal rotation
+    -- cycle after an exit) is ignored.
+    if phaseTriggers and isMainDur(info and info.duration) then
+      tlExit(nowElapsed())
     end
   elseif e == "ENCOUNTER_TIMELINE_EVENT_STATE_CHANGED" then
     local id = a1
@@ -421,8 +465,10 @@ local function onTimelineEvent(e, a1)
     -- state 3 = Canceled. A MAIN rotation event canceled = sub-phase ENTRY. With a
     -- dur signature we match the canceled event's duration; without one we fall back
     -- to survival (lived >= TL_MIN_SURVIVE). Debounced + alternated with exits so a
-    -- sub-phase's many simultaneous cancels advance the phase only once.
-    if st == 3 and phaseTriggers then
+    -- sub-phase's many simultaneous cancels advance the phase only once. SUPPRESSED for
+    -- warning-gated bosses (PHASE_ENTRY_WARN): their signature durations also cancel as
+    -- routine/exit churn, so a state=3 here would mis-fire — their entry is the warning.
+    if st == 3 and phaseTriggers and not (activeId and PHASE_ENTRY_WARN[activeId]) then
       local now = nowElapsed()
       local sig = activeId and PHASE_DUR_SIGNATURES[activeId]
       local isEntry
@@ -432,11 +478,7 @@ local function onTimelineEvent(e, a1)
         local at = tlAddedAt and tlAddedAt[id]
         isEntry = at ~= nil and (now - at) >= TL_MIN_SURVIVE
       end
-      if isEntry and tlLastSignal ~= "entry" and (now - (tlLastAdvance or -999)) >= TL_DEBOUNCE then
-        tlLastAdvance = now
-        tlLastSignal = "entry"
-        timelineAdvancePhase()
-      end
+      if isEntry then tlEntry(now) end
     end
   elseif e == "ENCOUNTER_TIMELINE_EVENT_REMOVED" then
     line = "id=" .. safeVal(a1)
@@ -444,7 +486,22 @@ local function onTimelineEvent(e, a1)
     if durById and type(a1) == "number" then durById[a1] = nil end
   elseif e == "ENCOUNTER_WARNING" then
     local info = a1
-    line = "dur=" .. safeVal(info and info.duration) .. " sev=" .. safeVal(info and info.severity)
+    local sev = info and info.severity
+    local wdur = info and info.duration
+    line = "dur=" .. safeVal(wdur) .. " sev=" .. safeVal(sev)
+    -- warning-gated ENTRY: the sub-phase telegraph. Match severity, and (when the boss
+    -- needs it) the warning's own duration to tell the sub-phase cast apart from routine
+    -- telegraphs of the same severity (Crawth = sev only; Lothraxion = sev 2 + dur 3.5).
+    local cfg = activeId and PHASE_ENTRY_WARN[activeId]
+    if phaseTriggers and cfg and type(sev) == "number"
+       and not (issecretvalue and issecretvalue(sev)) and sev >= cfg.sev then
+      local durOk = true
+      if cfg.dur then
+        durOk = type(wdur) == "number" and not (issecretvalue and issecretvalue(wdur))
+                and math.abs(wdur - cfg.dur) < DUR_EPSILON
+      end
+      if durOk then tlEntry(nowElapsed()) end
+    end
   else
     line = safeVal(a1)
   end
@@ -534,6 +591,7 @@ local function run(cues, opts)
   tlPhaseSeen = 0
   tlLastAdvance = nil
   tlLastSignal = nil
+  tlCursor = nil
   lastHpLog = nil
   lastBossCount = nil
   queue = {}
@@ -549,7 +607,11 @@ local function run(cues, opts)
     local triggers = {}
     for _, p in ipairs(phases) do
       local t = p.trigger
-      if p.index and p.index > 1 and t and (t.spellId or t.pct) then
+      -- Register EVERY index>1 phase that carries a (recognized) trigger kind — even
+      -- when it has no spellId/pct (rotation-resume / TL-only exits). Such phases have
+      -- no BigWigs/CLEU match; they advance purely from the Encounter Timeline via
+      -- timelineAdvancePhase, so the index SLOT must exist or 2→3→4→5 breaks.
+      if p.index and p.index > 1 and t and t.kind then
         triggers[#triggers + 1] = {
           index = p.index, kind = t.kind, spellId = t.spellId,
           occurrence = t.occurrence or 1, pct = t.pct, unitCount = t.unitCount,
