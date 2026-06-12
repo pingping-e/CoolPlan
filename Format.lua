@@ -240,6 +240,9 @@ function Format.Parse(text)
           if idx then
             local phase = { index = idx, label = trim(f[3] or "") }
             local kind = trim(f[4] or "")
+            -- Hand-mirror of PHASE_TRIGGER_KINDS (lib/timeline/types/catalog.ts, the
+            -- canonical list). Keep in sync when adding a kind — the site's round-trip
+            -- + catalog vitest guard the TS/JSON side, this Lua list is manual.
             if kind == "cast" or kind == "removedebuff" or kind == "applybuff"
                or kind == "removebuff" or kind == "rotation-resume" or kind == "interrupt"
                or kind == "health" then
