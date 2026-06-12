@@ -708,7 +708,7 @@ local function run(cues, opts)
       pendingPhase[pidx] = pendingPhase[pidx] or {}
       local list = pendingPhase[pidx]
       list[#list + 1] = c
-    elseif (not previewMode) and pidx and pidx > 1 then
+    elseif (not previewMode) and phaseTriggers and pidx and pidx > 1 then
       -- Phase-gated cue whose phase has NO live trigger to anchor it (plan/format
       -- mismatch, a repeat-expansion gap, a future boss). For a phase boss an
       -- offset-from-pull "absolute" time is meaningless, so firing it would show
@@ -716,6 +716,9 @@ local function run(cues, opts)
       -- breaks (e.g. a Blizzard hotfix shifts a dur), recovery is a fast addon
       -- release (auto-updated via WoWUp/CurseForge), NOT a misleading fallback.
       -- (Preview keeps the cue below so the Timeline test still renders the plan.)
+      -- GATED on `phaseTriggers`: only a phase-gated PLAN suppresses. A non-phase
+      -- plan (no @phase table) with a hand-edited pN+ row keeps its absolute time
+      -- below — for a non-phase boss the pull-relative time IS meaningful.
       if ns.debug then
         recordCapture("tl:SUPPRESS", "pidx=" .. tostring(pidx) .. " spell=" .. tostring(c.spellId), "")
       end
