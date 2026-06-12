@@ -31,7 +31,7 @@ local pendingPhase, phaseTriggers, hasHealthTrigger
 --   tlLastAdvance   = elapsed of the last advance (debounce so one signal fires once)
 --   tlLastSignal    = 'entry' | 'exit' — alternation guard for 5-segment advance
 --   tlCursor        = index into phaseTriggers; the next phase a TL signal fires
-local tlAddedAt, tlPhaseSeen, tlLastAdvance, durById, tlLastSignal, tlCursor
+local tlAddedAt, tlLastAdvance, durById, tlLastSignal, tlCursor
 -- HP / boss-count diagnostic state. logBossHealth is defined AFTER recordCapture
 -- (it calls it), so forward-declare here for tick() and run() to reference.
 local logBossHealth, lastHpLog, lastBossCount, recordCapture
@@ -639,7 +639,6 @@ local function run(cues, opts)
   lastTimelinePhase = nil
   tlAddedAt = {}
   durById = {}
-  tlPhaseSeen = 0
   tlLastAdvance = nil
   tlLastSignal = nil
   tlCursor = nil
