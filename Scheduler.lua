@@ -195,6 +195,13 @@ end
 -- NEXT TL signal skip ahead to the exit phase at the entry's time. The cursor is immune
 -- — firePhase is idempotent, so BW's pre-fire of a phase the cursor also reaches is
 -- harmless. Gemellus (HP-gated) is handled by unitCount, not this.
+-- Trade-off (code review #3, judged a NON-ISSUE in practice): a positional cursor can't
+-- self-correct if a TL signal is ever spurious/missed (it would offset every later phase
+-- by one). Accepted because the happy path is verified live (Crawth w/ BigWigs) and no
+-- spurious/missed signal has been observed on any boss — each boundary emits exactly one
+-- entry + one exit, and the debounce/alternation collapse simultaneous-cancel bursts. If
+-- "cooldowns shifted by one phase / earlier-phase cues vanished" is ever reported, revisit
+-- with a fire-highest-fired-index resync. (Not structurally impossible, just unobserved.)
 local function timelineAdvancePhase()
   if not phaseTriggers then return end
   tlCursor = (tlCursor or 0) + 1
