@@ -246,9 +246,17 @@ local function pollHealth()
       for u = 1, 5 do
         local unit = "boss" .. u
         if UnitExists(unit) then
+          local hp = UnitHealth(unit)
           local mx = UnitHealthMax(unit)
-          if mx and mx > 0 then
-            local pc = UnitHealth(unit) / mx * 100
+          -- Midnight: boss HP is a SECRET value inside instances — any compare/
+          -- arithmetic on it throws a Lua error. Skip when secret (health gating is
+          -- unsupported there; the phase slot still advances via the TL cursor, or
+          -- its cues suppress). This is why HP-gated bosses are modeled as `cast`/
+          -- `unitCount`, not `health` — but guard here so a stray health trigger
+          -- can never crash the player mid-pull.
+          local secret = issecretvalue and (issecretvalue(hp) or issecretvalue(mx))
+          if (not secret) and mx and mx > 0 then
+            local pc = hp / mx * 100
             if pc > 0 and pc <= tr.pct then
               firePhase(tr.index)
               break
