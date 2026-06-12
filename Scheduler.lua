@@ -45,10 +45,11 @@ local TL_DEBOUNCE = 8       -- s: ignore further signals within this window. Its
 -- NSRT-style dur signatures (from /coolplan capture): a boss's MAIN rotation event
 -- durations. A main-dur event CANCELED (state=3) = sub-phase ENTRY; the main-dur set
 -- re-ADDED = sub-phase EXIT (= next main phase). More robust than survival+occurrence
--- (no occ-skew). Gemellus uses unitCount, L'ura is absolute → not listed here (they
--- fall back to survival / unitCount). Crawth (2564) reuses its rotation dur during the
--- sub-phase, so its ENTRY comes from PHASE_ENTRY_WARN instead (the dur sig here
--- still drives its exit). ✓ ALL FOUR VERIFIED in-game (2026-06-11/12): 3058 Kroluk &
+-- (no occ-skew). Gemellus uses unitCount → not listed here. Crawth (2564) & Lothraxion
+-- (3333) reuse their rotation dur during the sub-phase, so their ENTRY comes from
+-- PHASE_ENTRY_WARN instead (the dur sig here still drives their exit); L'ura (2068) is
+-- likewise EXIT-ONLY here (entry = PHASE_ENTRY_ANYCANCEL, its cancel dur is laser-variable).
+-- ✓ ALL FOUR VERIFIED in-game (2026-06-11/12): 3058 Kroluk &
 -- 3213 Vordaza use a signature dur going state=3 for ENTRY (Vordaza's dur=70 cancels at
 -- the Deathshroud entry); 2564 Crawth & 3333 Lothraxion are warning-gated (PHASE_ENTRY_
 -- WARN) so their signature is EXIT-ONLY (the rotation set re-ADDED ends the sub-phase).
@@ -62,6 +63,15 @@ local PHASE_DUR_SIGNATURES = {
   -- are transient "remaining-time" snapshots at the boundary — deliberately NOT
   -- listed (an exact match avoids false EXIT fires right after an entry).
   [3333] = { 2, 11, 52, 24 },                  -- Lothraxion
+  [2068] = { 24, 12, 35 },                     -- L'ura: main rotation SET (Discordant Beam 24 /
+  -- Disintegrate 12 / Grim Chorus 35). EXIT-ONLY (entry is PHASE_ENTRY_ANYCANCEL, below).
+  -- VERIFIED 2026-06-12 (capture fight 2068): the main set {1.5,24,12,35} re-ADDs together at
+  -- each sub-phase exit. 1.5 is DELIBERATELY EXCLUDED — it collides with the Symphony cast bar
+  -- (dur 1.5) that ADDs AT the entry, which (alternation just set "entry") would fire a false
+  -- EXIT one tick after the entry. 24/12/35 appear ONLY at the main-set re-ADD — never during
+  -- the intermission (which shows just 1.5/20) nor in the b-set (5/17/28) — so the first of them
+  -- after an entry = the rotation resumed = exit. Multi-value (like Kroluk/Crawth) is more
+  -- robust than a single dur if one value drifts run-to-run (sub-phases 2+ not yet captured).
 }
 local DUR_EPSILON = 0.3     -- s: float dur match tolerance (25.333, 14.166 …)
 -- Warning-gated ENTRY. Some bosses don't surface a clean sub-phase CANCEL on a signature
@@ -80,6 +90,21 @@ local DUR_EPSILON = 0.3     -- s: float dur match tolerance (25.333, 14.166 …)
 local PHASE_ENTRY_WARN = {
   [2564] = { sev = 2 },              -- Crawth: severity alone (routine = sev 1)
   [3333] = { sev = 2, dur = 3.5 },   -- Lothraxion: routine warnings are also sev 2 (dur 3)
+}
+-- ANY-CANCEL ENTRY. A few bosses signal the sub-phase by interrupting their rotation
+-- but the CANCELED event's duration isn't fixed (so it can't be dur-gated like
+-- Kroluk/Vordaza). For these, ANY state=3 (cancel) during combat = sub-phase entry; the
+-- exit still comes from the dur signature (rotation set re-ADD). The entry/exit
+-- alternation + debounce keep one signal per boundary.
+--   L'ura (2068): L'ura casts Symphony of the Eternal Night (annihilation) until Alleria
+--     interrupts it; the cast START cancels whatever rotation event is currently active
+--     (laser-variable: dur 28 in two captures, but which event is active shifts with the
+--     laser-objective timing), so the entry can't key on a fixed dur. VERIFIED 2026-06-12
+--     (two captures): during combat the ONLY state=3 was the intermission entry (~64s);
+--     all other transitions were state=2. Combat-end cancels arrive with pullTime nil
+--     (guarded below).
+local PHASE_ENTRY_ANYCANCEL = {
+  [2068] = true,                    -- L'ura: Symphony interrupt cancels a laser-variable rotation event
 }
 -- preview mode: a virtual clock advanced by `speed`x each real tick, with an
 -- optional onTick(elapsed, total) callback (used by the Timeline playhead).
@@ -532,14 +557,20 @@ local function onTimelineEvent(e, a1)
     -- state 3 = Canceled. A boss's MAIN rotation event canceled = sub-phase ENTRY, matched
     -- by its dur SIGNATURE (Kroluk/Vordaza). SUPPRESSED for warning-gated bosses
     -- (PHASE_ENTRY_WARN: Crawth/Lothraxion — their signature durations also cancel as
-    -- routine/exit churn, so state=3 here would mis-fire; entry is the warning). Bosses
-    -- with NO signature use their OWN explicit gate (Gemellus = unitCount, L'ura =
-    -- absolute), so there is deliberately NO generic survival fallback here — a "lived
-    -- >= Ns then canceled = entry" guess would fire Gemellus's p2 on any early bar cancel,
-    -- before the 5-unit split, and firePhase would consume its cues unrecoverably.
-    if st == 3 and phaseTriggers and activeId and PHASE_DUR_SIGNATURES[activeId]
-       and not PHASE_ENTRY_WARN[activeId] then
-      if isMainDur(durById and durById[id]) then tlEntry(nowElapsed()) end
+    -- routine/exit churn, so state=3 here would mis-fire; entry is the warning). L'ura
+    -- (PHASE_ENTRY_ANYCANCEL) fires on ANY cancel (its entry-cancel dur is laser-variable),
+    -- but ONLY while pullTime is live — a fight's END cancels the whole rotation set at
+    -- once with pullTime nil (verified: combat-end state=3 burst at elapsed 0), which the
+    -- guard drops. Bosses with NO signature/anycancel use their OWN gate (Gemellus =
+    -- unitCount), so there is deliberately NO generic survival fallback — a "lived >= Ns
+    -- then canceled = entry" guess would fire Gemellus's p2 on any early bar cancel, before
+    -- the 5-unit split, and firePhase would consume its cues unrecoverably.
+    if st == 3 and phaseTriggers and activeId and not PHASE_ENTRY_WARN[activeId] then
+      if PHASE_ENTRY_ANYCANCEL[activeId] then
+        if pullTime then tlEntry(nowElapsed()) end                    -- L'ura: any cancel = entry (combat only)
+      elseif PHASE_DUR_SIGNATURES[activeId] and isMainDur(durById and durById[id]) then
+        tlEntry(nowElapsed())                                         -- Kroluk/Vordaza: signature cancel = entry
+      end
     end
   elseif e == "ENCOUNTER_TIMELINE_EVENT_REMOVED" then
     line = "id=" .. safeVal(a1)
