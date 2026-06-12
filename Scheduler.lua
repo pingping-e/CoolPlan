@@ -708,8 +708,19 @@ local function run(cues, opts)
       pendingPhase[pidx] = pendingPhase[pidx] or {}
       local list = pendingPhase[pidx]
       list[#list + 1] = c
+    elseif (not previewMode) and pidx and pidx > 1 then
+      -- Phase-gated cue whose phase has NO live trigger to anchor it (plan/format
+      -- mismatch, a repeat-expansion gap, a future boss). For a phase boss an
+      -- offset-from-pull "absolute" time is meaningless, so firing it would show
+      -- WRONG timing — worse than nothing. Suppress it. If a boss's phase signature
+      -- breaks (e.g. a Blizzard hotfix shifts a dur), recovery is a fast addon
+      -- release (auto-updated via WoWUp/CurseForge), NOT a misleading fallback.
+      -- (Preview keeps the cue below so the Timeline test still renders the plan.)
+      if ns.debug then
+        recordCapture("tl:SUPPRESS", "pidx=" .. tostring(pidx) .. " spell=" .. tostring(c.spellId), "")
+      end
     else
-      -- absolute (or a phase with no usable trigger → best-effort offset-from-pull)
+      -- genuinely absolute: pidx nil / phase 1, or the preview sequential layout
       local castAt = c.timeMs / 1000
       if previewMode and pidx and pidx > 1 then
         -- No real phase timing in preview. Use the SAME sequential layout the Timeline
