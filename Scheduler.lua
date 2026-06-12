@@ -35,8 +35,6 @@ local tlAddedAt, tlPhaseSeen, tlLastAdvance, durById, tlLastSignal, tlCursor
 -- HP / boss-count diagnostic state. logBossHealth is defined AFTER recordCapture
 -- (it calls it), so forward-declare here for tick() and run() to reference.
 local logBossHealth, lastHpLog, lastBossCount, recordCapture
-local TL_MIN_SURVIVE = 4   -- s: a CANCELED event must have lived this long to count
-                            -- as a sub-phase entry (survival FALLBACK, no dur sig)
 local TL_DEBOUNCE = 8       -- s: ignore further signals within this window. Its only
                             -- job is to collapse a boundary's burst of simultaneous
                             -- events (<1s apart) into one advance — the entry/exit
@@ -181,7 +179,10 @@ end
 -- Is this duration one of the active boss's MAIN rotation durations?
 local function isMainDur(dur)
   local sig = activeId and PHASE_DUR_SIGNATURES[activeId]
-  if not sig or type(dur) ~= "number" then return false end
+  -- A Midnight-secret number still reports type=="number" but THROWS on arithmetic, so
+  -- guard it like the ENCOUNTER_WARNING path does before doing math.abs (else the first
+  -- ADDED/state=3 event on a boss whose duration is secret-guarded errors every frame).
+  if not sig or type(dur) ~= "number" or (issecretvalue and issecretvalue(dur)) then return false end
   for _, d in ipairs(sig) do if math.abs(dur - d) < DUR_EPSILON then return true end end
   return false
 end
@@ -444,7 +445,12 @@ local function bossModSpell(spellID, label, fire)
   if not fire then return end
   local now = GetTime()
   for _, tr in ipairs(phaseTriggers) do
-    if (not tr.fired) and tr.spellId == spellID then
+    -- EXIT phases (removebuff / rotation-resume / interrupt) advance ONLY via the
+    -- Encounter-Timeline cursor, never via a boss-mod spellId match. They often reuse the
+    -- ENTRY's spellId (Kroluk/Vordaza: cast p2 and removebuff p3 share one id), so matching
+    -- them here would fire the exit at the ENTRY's time on one boss-mod message.
+    local exitKind = tr.kind == "removebuff" or tr.kind == "rotation-resume" or tr.kind == "interrupt"
+    if (not tr.fired) and (not exitKind) and tr.spellId == spellID then
       if not (tr.lastSeen and (now - tr.lastSeen) < BOSSMOD_DEBOUNCE) then
         tr.lastSeen = now
         tr.seen = tr.seen + 1
@@ -492,7 +498,7 @@ local function onTimelineEvent(e, a1)
     if phaseTriggers and type(info and info.id) == "number" then
       tlAddedAt = tlAddedAt or {}
       tlAddedAt[info.id] = nowElapsed()
-      if type(info.duration) == "number" then
+      if type(info.duration) == "number" and not (issecretvalue and issecretvalue(info.duration)) then
         durById = durById or {}
         durById[info.id] = info.duration
       end
@@ -508,23 +514,17 @@ local function onTimelineEvent(e, a1)
     local id = a1
     local st = C_EncounterTimeline and C_EncounterTimeline.GetEventState and C_EncounterTimeline.GetEventState(id)
     line = "id=" .. safeVal(id) .. " state=" .. safeVal(st)
-    -- state 3 = Canceled. A MAIN rotation event canceled = sub-phase ENTRY. With a
-    -- dur signature we match the canceled event's duration; without one we fall back
-    -- to survival (lived >= TL_MIN_SURVIVE). Debounced + alternated with exits so a
-    -- sub-phase's many simultaneous cancels advance the phase only once. SUPPRESSED for
-    -- warning-gated bosses (PHASE_ENTRY_WARN): their signature durations also cancel as
-    -- routine/exit churn, so a state=3 here would mis-fire — their entry is the warning.
-    if st == 3 and phaseTriggers and not (activeId and PHASE_ENTRY_WARN[activeId]) then
-      local now = nowElapsed()
-      local sig = activeId and PHASE_DUR_SIGNATURES[activeId]
-      local isEntry
-      if sig then
-        isEntry = isMainDur(durById and durById[id])
-      else
-        local at = tlAddedAt and tlAddedAt[id]
-        isEntry = at ~= nil and (now - at) >= TL_MIN_SURVIVE
-      end
-      if isEntry then tlEntry(now) end
+    -- state 3 = Canceled. A boss's MAIN rotation event canceled = sub-phase ENTRY, matched
+    -- by its dur SIGNATURE (Kroluk/Vordaza). SUPPRESSED for warning-gated bosses
+    -- (PHASE_ENTRY_WARN: Crawth/Lothraxion — their signature durations also cancel as
+    -- routine/exit churn, so state=3 here would mis-fire; entry is the warning). Bosses
+    -- with NO signature use their OWN explicit gate (Gemellus = unitCount, L'ura =
+    -- absolute), so there is deliberately NO generic survival fallback here — a "lived
+    -- >= Ns then canceled = entry" guess would fire Gemellus's p2 on any early bar cancel,
+    -- before the 5-unit split, and firePhase would consume its cues unrecoverably.
+    if st == 3 and phaseTriggers and activeId and PHASE_DUR_SIGNATURES[activeId]
+       and not PHASE_ENTRY_WARN[activeId] then
+      if isMainDur(durById and durById[id]) then tlEntry(nowElapsed()) end
     end
   elseif e == "ENCOUNTER_TIMELINE_EVENT_REMOVED" then
     line = "id=" .. safeVal(a1)
@@ -848,10 +848,16 @@ end
 -- the testenc fallback when a boss has no saved plan yet. Arms BARE phase slots
 -- (p2..p7, no cues) so the live TL/warning detection can still advance and LOG
 -- "phase N fired" — letting you verify 2→3→4→5 detection without importing a plan.
+-- Bare phase slots for plan-less capture. Must cover the MOST phases any boss can
+-- export: timer-recurring bosses (Lothraxion/Vordaza) expand to 1 + maxOccurrences*2
+-- phases (boss-phases.json repeat.maxOccurrences = 8 → up to index 17). Too few slots
+-- and a long pull's later TL signals advance the cursor past the end (no "phase N fired"
+-- log), making detection look truncated. Keep this ≥ that ceiling.
+local CAPTURE_PHASE_SLOTS = 17
 function Scheduler.StartCapture(encounterID)
   activeId = encounterID
   local phases = {}
-  for i = 2, 7 do phases[#phases + 1] = { index = i, trigger = { kind = "cast" } } end
+  for i = 2, CAPTURE_PHASE_SLOTS do phases[#phases + 1] = { index = i, trigger = { kind = "cast" } } end
   return run({}, { captureOnly = true, phases = phases })
 end
 
