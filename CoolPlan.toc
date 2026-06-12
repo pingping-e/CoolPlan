@@ -33,4 +33,5 @@ Editor.lua
 LoadoutExport.lua
 Options.lua
 Minimap.lua
+WhatsNew.lua
 Core.lua

@@ -31,6 +31,14 @@ Core:SetScript("OnEvent", ns.wrap(function(_, event, ...)
     -- live phase detection routes through them in Midnight (combat log is blocked).
     if ns.Scheduler.InitBossMods then ns.Scheduler.InitBossMods() end
     out("loaded. /coolplan to open, /coolplan import to paste a plan.")
+    -- One-time "what's new" notice on the first login after an update. Delayed a few
+    -- seconds (out of the login UI rush) and fully pcall-guarded inside MaybeShow, so
+    -- it can never break login.
+    if ns.WhatsNew and C_Timer and C_Timer.After then
+      C_Timer.After(3, function() ns.WhatsNew.MaybeShow() end)
+    elseif ns.WhatsNew then
+      ns.WhatsNew.MaybeShow()
+    end
   elseif event == "ENCOUNTER_START" then
     local encounterID = ...
     local e = ns.DB.GetEncounter(encounterID)
@@ -156,6 +164,8 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
   elseif cmd == "stop" then
     ns.Scheduler.Stop()
     out("stopped.")
+  elseif cmd == "whatsnew" then
+    if ns.WhatsNew then ns.WhatsNew.Show() end
   elseif cmd == "errors" then
     ns.PrintErrors()
   elseif cmd == "debug" then
@@ -180,6 +190,6 @@ SlashCmdList["COOLPLAN"] = ns.wrap(function(msg)
     end
     if n == 0 then out("no plans imported yet. /coolplan edit to paste one.") end
   else
-    out("commands: (blank)=open | timeline | plans | import | export-char | options | minimap | share | list | test | demo | move | lock | preview | reset | testenc <id> | stop | errors | debug")
+    out("commands: (blank)=open | timeline | plans | import | export-char | options | minimap | share | list | test | demo | move | lock | preview | reset | testenc <id> | stop | whatsnew | errors | debug")
   end
 end)
