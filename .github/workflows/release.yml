@@ -1,0 +1,36 @@
+# Builds + uploads to CurseForge when you push a version tag.
+#   git tag v0.1.1 && git push origin v0.1.1
+#
+# Requires (on the CoolPlan repo):
+#   - Settings > Secrets > Actions: CF_API_KEY        (CurseForge API token)
+#   - CoolPlan.toc:  ## X-Curse-Project-ID: 1563905   (already set)
+#   - CoolPlan.toc:  ## X-Wago-ID: qGZOnaNd           (already set)
+# The BigWigsMods packager reads .pkgmeta (package-as: CoolPlan) and uploads to
+# CurseForge when the project ID + CF_API_KEY are present.
+#
+# Wago is intentionally published via Wago's own GitHub webhook (pull), NOT by
+# this packager, so WAGO_API_TOKEN is deliberately NOT set as a secret and the
+# env line below is commented out. Setting it would double-publish (packager push
+# AND webhook pull). To switch Wago to the packager-push path instead, add the
+# WAGO_API_TOKEN secret and uncomment the line.
+name: Package and release
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package and release
+        uses: BigWigsMods/packager@v2
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          # WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}  # Wago = webhook (pull); see header note
+          GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
