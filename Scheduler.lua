@@ -32,6 +32,12 @@ local pendingPhase, phaseTriggers, hasHealthTrigger
 --   tlLastSignal    = 'entry' | 'exit' - alternation guard for 5-segment advance
 --   tlCursor        = index into phaseTriggers; the next phase a TL signal fires
 local tlAddedAt, tlLastAdvance, durById, tlLastSignal, tlCursor
+-- Raid linear-phase state (raid bosses only; see RAID_PHASE_DURS):
+--   raidCur     = current phase index (1-based); nil = not a raid-armed pull
+--   raidSwapAt  = elapsed of the last raid advance (debounce)
+--   raidAddedAt = elapsed of each ADDED timeline event this pull (for the isolation
+--                 guard and the event-count detector below)
+local raidCur, raidSwapAt, raidAddedAt
 -- HP / boss-count diagnostic state. logBossHealth is defined AFTER recordCapture
 -- (it calls it), so forward-declare here for tick() and run() to reference.
 local logBossHealth, lastHpLog, lastBossCount, recordCapture
@@ -106,6 +112,71 @@ local PHASE_ENTRY_WARN = {
 local PHASE_ENTRY_ANYCANCEL = {
   [2068] = true,                    -- L'ura: Symphony interrupt cancels a laser-variable rotation event
 }
+-- ── Raid phase detection (our dur-signature method, applied to RAID bosses) ────
+-- Same idea as the dungeon engine above: the official Encounter Timeline never
+-- exposes a usable info.phase (secret in Midnight instances - the same lockdown
+-- that hides CLEU/HP), so we read the DURATION of each boundary's ADDED timeline
+-- event. Dungeons have a main→sub→main structure (entry/exit alternation, above);
+-- raids are LINEAR (P1→P2→P3…), so the curation is simpler: per encounterID →
+-- difficultyID → { [currentPhase] = the ADDED-event duration that advances that
+-- phase to the next }. `mode="ge"` matches dur >= value (a long transition bar);
+-- default matches |dur - value| < RAID_DUR_EPSILON. Raid bosses never set
+-- phaseTriggers, so the entry/exit dungeon path is structurally never entered for
+-- them (and vice-versa) - the two detectors can't interfere.
+local RAID_DUR_EPSILON = 0.2
+local RAID_PHASE_DEBOUNCE = 5   -- s: min gap between raid advances (collapse the
+                                -- boundary's burst of ADDED events into one advance)
+-- Per boss: optional `mode`/`delay`, then difficultyID → advance durations. The
+-- duration table is either an ARRAY indexed by current phase ({45,97,180} = the
+-- value that advances P1→2, P2→3, P3→4) or `{ all = N }` (any phase advances on
+-- duration N - used when every transition shares one bar length). `mode="ge"`
+-- matches dur >= value; default matches |dur - value| < RAID_DUR_EPSILON. `delay`
+-- (s) fires the advance that many seconds AFTER the matching event.
+local RAID_PHASE_DURS = {
+  [3182] = {                       -- Belo'ren, Child of Al'ar
+    mode = "eq",                   -- exact short bar at each Death Drop
+    isolate = true,                -- only advance on an ISOLATED dur-6 (≤1 ADDED within
+                                   -- ISOLATE_WINDOW); a dur-6 inside a same-instant burst
+                                   -- isn't the Death Drop transition.
+    [14] = { all = 6 },
+    [15] = { all = 6 },
+    [16] = { all = 6 },
+  },
+  [3183] = {                       -- Midnight Falls (L'ura)
+    -- P4→P5 isn't duration-gated: it resolves on a fresh encounter-engage once the
+    -- 2nd boss unit is gone, >guard s into P4 (see ENGAGE handling in onTimelineEvent).
+    -- Mythic-only (`diff`): the 2-boss P4→P5 split exists only on Mythic.
+    engage = { from = 4, to = 5, guard = 20, noUnit = "boss2", diff = 16 },
+    [15] = { 45, 97, 180 },        -- P1→2, P2→3, P3→4 (Heroic)
+    [16] = { 45, 97, 180 },        -- (Mythic)
+  },
+  [3181] = {                       -- Crown of the Cosmos — Normal/Heroic (dur sequence).
+    mode = "eq",                   -- exact bar lengths (1.5 is GCD-sized - needs exact)
+    [14] = { 1.5, 24, 1.5, 60 },   -- P1→2, P2→3, P3→4, P4→5
+    [15] = { 1.5, 24, 1.5, 60 },
+    -- Mythic (16) uses event COUNTING instead (see RAID_COUNT).
+  },
+  -- Salhadaar (3179): not a phase boss for our purposes (see RAID_PHASE_ANCHORING handoff).
+}
+-- Event-count phase detection (when a single transition duration isn't reliable, the
+-- phase advances once enough timeline events accumulate in a short window). Same family
+-- as the dungeon unit-count / state-cancel detectors, applied to timeline-event counts.
+--   required[p]  = ADDED events (within `window` s) needed to leave phase p; false = no
+--                  count rule for that phase (handled by `skip`).
+--   phase1Durs   = while in phase 1, only count ADDED events of these durations.
+--   skip         = a phase that jumps forward (Crown P3→P5): reached on `count` events
+--                  OR an ADDED event of `altDur`.
+local RAID_COUNT_WINDOW = 0.3
+local RAID_COUNT = {
+  [3181] = {                       -- Crown of the Cosmos — Mythic only
+    [16] = {
+      required = { 2, 4, false, 4 },
+      phase1Durs = { [1.5] = true, [25] = true, [6] = true },
+      skip = { from = 3, to = 5, count = 8, altDur = 60 },
+    },
+  },
+}
+local ISOLATE_WINDOW = 0.1        -- s: window for the Belo'ren isolation guard
 -- preview mode: a virtual clock advanced by `speed`x each real tick, with an
 -- optional onTick(elapsed, total) callback (used by the Timeline playhead).
 local preview = false
@@ -194,6 +265,132 @@ local function firePhase(index)
     enqueue(cue, anchorElapsed + cue.timeMs / 1000)
   end
   finalizeQueue()
+end
+
+-- Current instance difficulty id (16=Mythic, 15=Heroic, 14=Normal raid).
+local function instanceDifficulty()
+  return select(3, GetInstanceInfo()) or 0
+end
+
+-- Raid LINEAR phase advance: on a timeline ADDED event of duration `dur`, if the
+-- active raid boss's table says this duration advances the current phase, fire the
+-- next one. No-op for any encounter not in RAID_PHASE_DURS (so dungeons and the
+-- demo/preview pulls are untouched). Debounced like the dungeon path so a
+-- boundary's burst of ADDED events advances only once.
+local function raidAdvance(dur, now)
+  local cfg = activeId and RAID_PHASE_DURS[activeId]
+  if not cfg or not raidCur then return end
+  -- Midnight-secret numbers report type=="number" but throw on arithmetic - guard
+  -- before math, exactly like isMainDur / the ENCOUNTER_WARNING path.
+  if type(dur) ~= "number" or (issecretvalue and issecretvalue(dur)) then return end
+  if (now - (raidSwapAt or -999)) < RAID_PHASE_DEBOUNCE then return end
+  local byPhase = cfg[instanceDifficulty()]
+  -- per-current-phase value, or a single `all` value shared by every phase
+  local want = byPhase and (byPhase[raidCur] or byPhase.all)
+  if not want then return end
+  -- Match mode per boss: "ge" = a long transition bar (dur ≥ value); "eq" = an
+  -- exact bar length (the transition emits one precise duration, so a tolerance
+  -- would let an ordinary same-ish bar false-trigger - notably a ~1.5s GCD bar);
+  -- default = approximate (the bar length wobbles run to run).
+  local matched
+  if cfg.mode == "ge" then
+    matched = dur >= want
+  elseif cfg.mode == "eq" then
+    matched = dur == want
+  else
+    matched = math.abs(dur - want) < RAID_DUR_EPSILON
+  end
+  if not matched then return end
+  -- Isolation guard (Belo'ren): the Death Drop's dur-6 bar appears ALONE. A dur-6
+  -- inside a same-instant burst of ADDED events isn't the transition. raidAddedAt holds
+  -- this pull's ADDED times (the current one included); advance only if it's the sole
+  -- event within ISOLATE_WINDOW.
+  if cfg.isolate and raidAddedAt then
+    local n = 0
+    for i = #raidAddedAt, 1, -1 do
+      if now - raidAddedAt[i] <= ISOLATE_WINDOW then n = n + 1 else break end
+    end
+    if n > 1 then return end
+  end
+  raidSwapAt = now
+  local target = raidCur + 1
+  raidCur = target  -- reserve the slot now so a duplicate event can't double-advance
+  if ns.debug then recordCapture("raid:ADVANCE", "phase:" .. target .. " dur:" .. tostring(dur), "") end
+  if cfg.delay then
+    -- Some transitions resolve a fixed time after their telegraph bar. Capture the
+    -- pull identity (pullTime is unique per pull) so a timer from a previous pull
+    -- can't fire after a quick re-pull of the same boss.
+    local pt = pullTime
+    C_Timer.After(cfg.delay, function()
+      if pullTime == pt then firePhase(target) end
+    end)
+  else
+    firePhase(target)
+  end
+end
+
+-- Event-COUNT phase advance (Crown Mythic): a single transition duration isn't
+-- reliable, so the phase advances once enough ADDED events accumulate in a short
+-- window. Same family as the unit-count / state-cancel detectors, on event counts.
+-- Called from the ADDED branch with the event's duration. raidAddedAt accumulates the
+-- counted events; it is reset on every advance.
+local function raidCountAdvance(dur, now)
+  local cfg = activeId and RAID_COUNT[activeId]
+  cfg = cfg and cfg[instanceDifficulty()]
+  if not cfg or not raidCur then return end
+  if (now - (raidSwapAt or -999)) < RAID_PHASE_DEBOUNCE then return end
+  -- In phase 1 only the listed transition-bar durations count; from phase 2 on,
+  -- every encounter ADDED event counts.
+  local countThis = true
+  if raidCur == 1 then
+    countThis = type(dur) == "number" and not (issecretvalue and issecretvalue(dur))
+      and cfg.phase1Durs and cfg.phase1Durs[dur] == true
+  end
+  if countThis then
+    raidAddedAt = raidAddedAt or {}
+    raidAddedAt[#raidAddedAt + 1] = now
+  end
+  local n = 0
+  if raidAddedAt then
+    for i = #raidAddedAt, 1, -1 do
+      if now - raidAddedAt[i] <= RAID_COUNT_WINDOW then n = n + 1 else break end
+    end
+  end
+  local req = cfg.required and cfg.required[raidCur]
+  if raidCur ~= (cfg.skip and cfg.skip.from) and req and n >= req then
+    raidCur = raidCur + 1
+    raidSwapAt = now
+    raidAddedAt = {}
+    if ns.debug then recordCapture("raid:COUNT", "phase:" .. raidCur .. " n:" .. n, "") end
+    firePhase(raidCur)
+    return
+  end
+  local skip = cfg.skip
+  if skip and raidCur == skip.from
+     and (n >= skip.count or (type(dur) == "number" and not (issecretvalue and issecretvalue(dur)) and dur == skip.altDur)) then
+    raidCur = skip.to
+    raidSwapAt = now
+    raidAddedAt = {}
+    if ns.debug then recordCapture("raid:COUNT", "skip→" .. raidCur .. " n:" .. n, "") end
+    firePhase(raidCur)
+    return
+  end
+end
+
+-- Encounter-roster phase advance (Midnight Falls P4→P5): the boundary isn't a cast/
+-- duration but a boss-unit change. On INSTANCE_ENCOUNTER_ENGAGE_UNIT, advance from
+-- `from` to `to` once `guard` seconds into `from` and the `noUnit` boss unit is gone.
+local function raidEngageAdvance(now)
+  local cfg = activeId and RAID_PHASE_DURS[activeId]
+  cfg = cfg and cfg.engage
+  if not cfg or not raidCur or raidCur ~= cfg.from then return end
+  if cfg.diff and instanceDifficulty() ~= cfg.diff then return end  -- Mythic-only split
+  if (now - (raidSwapAt or -999)) < (cfg.guard or 0) then return end
+  if cfg.noUnit and UnitExists(cfg.noUnit) then return end
+  raidCur = cfg.to
+  raidSwapAt = now
+  if ns.debug then recordCapture("raid:ENGAGE", "phase:" .. raidCur, "") end
+  firePhase(raidCur)
 end
 
 -- C_EncounterTimeline sub-phase advance (for BW-less bosses). The official timeline
@@ -550,6 +747,27 @@ local function onTimelineEvent(e, a1)
     if phaseTriggers and isMainDur(info and info.duration) then
       tlExit(nowElapsed())
     end
+    -- Raid phase detection (no-op unless a raid boss is armed; structurally separate
+    -- from the dungeon entry/exit path above, which is gated on phaseTriggers — never
+    -- set for raids). Crown Mythic counts events (raidCountAdvance); the rest advance
+    -- linearly off the ADDED duration (raidAdvance), recording the ADDED time first so
+    -- the isolation guard can see same-instant bursts.
+    if raidCur then
+      local rdur, rnow = info and info.duration, nowElapsed()
+      local countCfg = activeId and RAID_COUNT[activeId]
+      if countCfg and countCfg[instanceDifficulty()] then
+        raidCountAdvance(rdur, rnow)
+      else
+        raidAddedAt = raidAddedAt or {}
+        raidAddedAt[#raidAddedAt + 1] = rnow
+        raidAdvance(rdur, rnow)
+      end
+    end
+  elseif e == "INSTANCE_ENCOUNTER_ENGAGE_UNIT" then
+    -- Boss-roster phase boundary (Midnight Falls P4→P5). No-op unless the active raid
+    -- boss has an `engage` rule and its conditions are met.
+    if raidCur then raidEngageAdvance(nowElapsed()) end
+    return
   elseif e == "ENCOUNTER_TIMELINE_EVENT_STATE_CHANGED" then
     local id = a1
     local st = C_EncounterTimeline and C_EncounterTimeline.GetEventState and C_EncounterTimeline.GetEventState(id)
@@ -635,6 +853,7 @@ function Scheduler.InitBossMods()
       "ENCOUNTER_TIMELINE_EVENT_REMOVED",
       "ENCOUNTER_TIMELINE_EVENT_STATE_CHANGED",
       "ENCOUNTER_WARNING",
+      "INSTANCE_ENCOUNTER_ENGAGE_UNIT", -- boss-roster phase boundary (raid engage rule)
     }) do
       pcall(tf.RegisterEvent, tf, ev) -- pcall: older clients may not have the event
     end
@@ -688,6 +907,9 @@ local function run(cues, opts)
   tlLastAdvance = nil
   tlLastSignal = nil
   tlCursor = nil
+  raidCur = nil
+  raidSwapAt = nil
+  raidAddedAt = nil
   lastHpLog = nil
   lastBossCount = nil
   queue = {}
@@ -730,6 +952,34 @@ local function run(cues, opts)
     end
   end
 
+  -- Does this plan carry a multi-phase @phase table? Used below to suppress phase
+  -- cues we can't anchor (rather than fire them at a meaningless pull offset). A
+  -- dungeon phased plan always also sets phaseTriggers, so this matches the prior
+  -- `phaseTriggers` gate for dungeons and additionally covers raid plans (whose
+  -- @phase rows carry no trigger, so phaseTriggers stays nil).
+  local planHasPhases = false
+  if phases then
+    for _, p in ipairs(phases) do
+      if p.index and p.index > 1 then planHasPhases = true break end
+    end
+  end
+  -- Raid bosses advance phases by the duration-signature method (raidAdvance), not
+  -- the plan's triggers. Arm the linear phase counter so a raid plan's phase cues
+  -- defer to pendingPhase and fire on advance. Gate on THIS difficulty having a dur
+  -- table (not just the boss) - otherwise an uncovered difficulty would arm but
+  -- never advance, parking phase cues silently; leaving it unarmed routes them
+  -- through the explicit suppress path below instead.
+  local raidCfg = RAID_PHASE_DURS[activeId]
+  local raidCountCfg = RAID_COUNT[activeId]
+  local diff = instanceDifficulty()
+  local raidArmed = planHasPhases and not previewMode and (
+    (raidCfg ~= nil and raidCfg[diff] ~= nil)            -- duration / engage boss
+    or (raidCountCfg ~= nil and raidCountCfg[diff] ~= nil) -- event-count boss (Crown Mythic)
+  )
+  -- raidSwapAt = 0 (not nil) so the debounce also blocks an advance in the first
+  -- RAID_PHASE_DEBOUNCE seconds after the pull (avoids a pull-burst false fire).
+  if raidArmed then raidCur, raidSwapAt, raidAddedAt = 1, 0, {} end
+
   local function phaseHasTrigger(idx)
     if not phaseTriggers then return false end
     for _, tr in ipairs(phaseTriggers) do
@@ -741,13 +991,13 @@ local function run(cues, opts)
   local maxCast = 0
   for _, c in ipairs(cues) do
     local pidx = c.phaseIndex
-    if pidx and pidx > 1 and phaseHasTrigger(pidx) then
-      -- defer until that phase's trigger fires
+    if pidx and pidx > 1 and (phaseHasTrigger(pidx) or raidArmed) then
+      -- defer until that phase's trigger (dungeon) or duration advance (raid) fires
       pendingPhase = pendingPhase or {}
       pendingPhase[pidx] = pendingPhase[pidx] or {}
       local list = pendingPhase[pidx]
       list[#list + 1] = c
-    elseif (not previewMode) and phaseTriggers and pidx and pidx > 1 then
+    elseif (not previewMode) and planHasPhases and pidx and pidx > 1 then
       -- Phase-gated cue whose phase has NO live trigger to anchor it (plan/format
       -- mismatch, a repeat-expansion gap, a future boss). For a phase boss an
       -- offset-from-pull "absolute" time is meaningless, so firing it would show
@@ -755,9 +1005,11 @@ local function run(cues, opts)
       -- breaks (e.g. a Blizzard hotfix shifts a dur), recovery is a fast addon
       -- release (auto-updated via WoWUp/CurseForge), NOT a misleading fallback.
       -- (Preview keeps the cue below so the Timeline test still renders the plan.)
-      -- GATED on `phaseTriggers`: only a phase-gated PLAN suppresses. A non-phase
-      -- plan (no @phase table) with a hand-edited pN+ row keeps its absolute time
-      -- below - for a non-phase boss the pull-relative time IS meaningful.
+      -- GATED on `planHasPhases`: only a plan WITH an @phase table suppresses
+      -- (dungeon phase plans set phaseTriggers too, so this matches the old gate for
+      -- them, and additionally covers raid plans, whose @phase rows carry no
+      -- trigger). A non-phase plan (no @phase table) with a hand-edited pN+ row keeps
+      -- its absolute time below - for a non-phase boss the pull-relative time IS meaningful.
       if ns.debug then
         recordCapture("tl:SUPPRESS", "pidx=" .. tostring(pidx) .. " spell=" .. tostring(c.spellId), "")
       end
@@ -948,6 +1200,7 @@ function Scheduler.Stop()
   -- phaseTriggers is cleared below.
   queue, pullTime, activeId = nil, nil, nil
   pendingPhase, phaseTriggers, hasHealthTrigger = nil, nil, false
+  raidCur, raidSwapAt, raidAddedAt = nil, nil, nil
   preview, previewClock, previewSpeed, previewTotal, previewOnTick = false, 0, 1, 0, nil
   previewPhaseStart = nil
   if ns.Reminders then ns.Reminders.Clear() end

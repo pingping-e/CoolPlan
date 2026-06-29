@@ -12,30 +12,28 @@ ns.WhatsNew = WhatsNew
 
 -- Bump ONLY when there is news to show. Login compares it to CoolPlanDB.lastWhatsNew;
 -- equal → nothing shows. A routine addon bump with no WhatsNew change stays silent.
-WhatsNew.version = "1.6.0"
+WhatsNew.version = "1.7.0"
 
 -- Per-language body. Color codes (|c…|r) render in FontStrings. The "Important" line
 -- is gold so the re-export requirement stands out.
 local BODY = {
   en = table.concat({
-    "Version update: the 6 phase-shifting bosses now work correctly with your cooldown plan.",
+    "Version update: raid bosses with shifting phases now work with your cooldown plan.",
     "",
-    "Affected bosses:",
-    "|cffffcc00Commander Kroluk|r (Windrunner Spire)  /  |cffffcc00Crawth|r (Algeth'ar Academy)  /  |cffffcc00Gemellus|r (Magisters' Terrace)",
-    "|cffffcc00Lothraxion|r (Nexus-Point Xenas)  /  |cffffcc00L'ura|r (Seat of the Triumvirate)  /  |cffffcc00Vordaza|r (Maisara Caverns)",
+    "Affected raid bosses:",
+    "|cffffcc00Crown of the Cosmos|r  /  |cffffcc00L'ura (Midnight Falls)|r  /  |cffffcc00Belo'ren, Child of Al'ar|r",
     "",
-    "|cffffcc00Important:|r only these bosses' plans need a refresh from the site (re-grabbing all is fine too, other bosses are not affected).",
+    "|cffffcc00Important:|r re-grab these bosses' plans from the site (re-grabbing all is fine too, other bosses are not affected).",
     "",
     "Not working, or you see an error? Tell us on Discord and we will fix it.",
     "",
     "|cff66b3ffcoolplan.team|r",
   }, "\n"),
   ko = table.concat({
-    "버전 업데이트: 6종 가변형 페이즈 보스도 이제 플랜대로 정확히 작동합니다.",
+    "버전 업데이트: 가변형 페이즈 레이드 보스도 이제 플랜대로 작동합니다.",
     "",
-    "적용 보스:",
-    "|cffffcc00지휘관 크롤루크|r (윈드러너 첨탑)  /  |cffffcc00크로스|r (알게타르 대학)  /  |cffffcc00제멜루스|r (마법학자의 정원)",
-    "|cffffcc00로스락시온|r (공결탑 제나스)  /  |cffffcc00르우라|r (삼두정의 권좌)  /  |cffffcc00보르다자|r (마이사라 동굴)",
+    "적용 레이드 보스:",
+    "|cffffcc00우주의 왕관|r  /  |cffffcc00르우라 (미드나잇 폴스)|r  /  |cffffcc00벨로렌|r",
     "",
     "|cffffcc00중요:|r 해당 보스의 플랜만 새로 받으면 됩니다 (전체를 받아도 무방, 다른 보스는 영향 없음).",
     "",

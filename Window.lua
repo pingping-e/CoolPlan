@@ -269,7 +269,7 @@ local function build()
     return b
   end
   local siteBox = labeledLink(foot, "Planner", "https://coolplan.team", 150)
-  labeledLink(siteBox, "Discord", "https://discord.gg/CZ3PjZhkVU", 185)
+  labeledLink(siteBox, "Discord", "https://discord.gg/atcYRRG8ka", 185)
 
   return f
 end
