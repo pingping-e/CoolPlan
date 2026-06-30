@@ -90,4 +90,4 @@ per-character saved data.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Bundled libraries keep their own licenses.
+All Rights Reserved, see [LICENSE](LICENSE). Bundled libraries keep their own licenses.

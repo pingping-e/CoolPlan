@@ -6,7 +6,7 @@
 ## SavedVariables: CoolPlanDB
 ## SavedVariablesPerCharacter: CoolPlanCharDB
 ## X-Website: https://coolplan.team
-## X-License: MIT
+## X-License: All Rights Reserved
 ## X-Curse-Project-ID: 1563905
 ## X-Wago-ID: qGZOnaNd
 
