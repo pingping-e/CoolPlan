@@ -40,17 +40,40 @@ local function labelFor(reminder)
   return name or reminder.spellName or ("Spell " .. tostring(reminder.spellId))
 end
 
+-- Apply a cue's icon to a texture region. A free-text note (spellId 0) has no
+-- real spell art: write a transparent texture (layoutHud/queue also HIDE the
+-- icon for a note so the message starts at the far left; the blank is just a
+-- safety so a note can never inherit the PREVIOUS cue's icon if the frame is
+-- ever shown). Any other cue whose spellId resolves no icon gets a neutral "?".
+-- Always writes SOMETHING so a missing icon can't keep a STALE one either
+-- (SetTexture(nil) would silently leave the stale texture in place).
+local FALLBACK_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
+local function applyCueIcon(tex, cue)
+  if not cue.spellId or cue.spellId == 0 then
+    tex:SetColorTexture(0, 0, 0, 0) -- note: blank, but keep the slot
+    return
+  end
+  local _, icon = spellInfo(cue.spellId)
+  tex:SetTexture(icon or FALLBACK_ICON)
+  tex:SetTexCoord(0.07, 0.93, 0.07, 0.93) -- re-crop: a prior note's SetColorTexture resets texcoords
+end
+
 -- ── placement helpers ──────────────────────────────────────────────────────────
+-- The HUD is CENTRE-anchored: fitHudWidth sizes the frame to its content and the
+-- CENTRE stays put, so the block reads as centred on its anchor point. saved.x/y
+-- is that centre. (A cue with a different name length re-centres the block, the
+-- user's chosen behaviour.) The queue keeps its own saved anchor (TOP-centred).
 local function restorePosition(frame, saved)
   frame:ClearAllPoints()
-  frame:SetPoint(saved.point or "CENTER", UIParent, saved.relPoint or "CENTER",
-    saved.x or 0, saved.y or 0)
+  local point = (frame == hud) and "CENTER" or (saved.point or "CENTER")
+  frame:SetPoint(point, UIParent, saved.relPoint or "CENTER", saved.x or 0, saved.y or 0)
 end
 
 local GRID = 20 -- alignment grid spacing, in (UIParent) pixels
 
 local function savePosition(frame, saved)
   local point, _, relPoint, x, y = frame:GetPoint(1)
+  if frame == hud then point = "CENTER" end -- keep the HUD centre-anchored
   saved.point = point or "CENTER"
   saved.relPoint = relPoint or "CENTER"
   saved.x = x or 0
@@ -194,7 +217,7 @@ local function buildQueue()
 
   f.header = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   f.header:SetPoint("TOPLEFT", 4, -2)
-  f.header:SetText("Next up")
+  f.header:Hide() -- no "Next up" caption; the rows read as the queue on their own
 
   f.label = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   f.label:SetPoint("BOTTOM", f, "TOP", 0, 2)
@@ -230,12 +253,33 @@ local THIN_BAR_H = 5
 -- A saved textColor may be malformed (stale/externally-edited SavedVariables);
 -- SetTextColor(nil,…) would throw every frame, so validate before use.
 local function validColor(tc) return type(tc) == "table" and type(tc.r) == "number" end
-local function layoutHud(o)
+
+-- Font family (o.fontFamily = a "Fonts\\X.TTF" path, or empty = default). A path
+-- that no longer loads (e.g. a LibSharedMedia font whose provider addon was
+-- removed) would make SetFont fail and blank the HUD text, so resolveFont
+-- validates and falls back to the locale default. It returns a KNOWN-GOOD path,
+-- so the layout SetFont calls below don't each need a guard.
+local DEFAULT_FONT = GameFontNormalHuge:GetFont()
+local fontProbe
+local function resolveFont(o)
+  local p = o and o.fontFamily
+  if type(p) ~= "string" or p == "" then return DEFAULT_FONT end
+  -- Validate by READBACK, not SetFont's return value (that is unreliable / nil on
+  -- some clients, which pinned everyone to the default). If the path loads,
+  -- GetFont echoes it back; a missing font leaves the probe's prior font, so the
+  -- mismatch routes us to the default and the text never vanishes.
+  if not fontProbe then fontProbe = UIParent:CreateFontString(nil, "BACKGROUND") end
+  fontProbe:SetFont(p, 12, "")
+  if fontProbe:GetFont() == p then return p end
+  return DEFAULT_FONT
+end
+
+local function layoutHud(o, isNote)
   local style = o.hudStyle or "iconName"
   local tpos = o.timePos or "icon"
   local size = o.fontSize or 28
   local c = validColor(o.textColor) and o.textColor or { r = 1, g = 0.95, b = 0.4 }
-  local fontPath = GameFontNormalHuge:GetFont() -- nil-guarded below
+  local fontPath = resolveFont(o) -- chosen font (validated; falls back to default)
 
   local icon, name, count, bar = hud.icon, hud.name, hud.count, hud.bar
   icon:ClearAllPoints(); name:ClearAllPoints(); count:ClearAllPoints(); bar:ClearAllPoints()
@@ -311,30 +355,108 @@ local function layoutHud(o)
     hud:SetSize(totalW, ICON_SIZE + THIN_BAR_H + 2)
 
   else -- "iconName"
-    -- 52px icon on the left, name on the right. No bar (countdown number only).
-    icon:SetSize(ICON_SIZE, ICON_SIZE)
+    -- icon sized to the TEXT height (not a fixed 52) so it doesn't dwarf the name,
+    -- then the name on the right. No bar (countdown number only).
+    local isz = math.max(14, size)
+    icon:SetSize(isz, isz)
     icon:SetPoint("LEFT", hud, "LEFT", PAD, 0)
     icon:Show()
 
-    name:SetPoint("LEFT", icon, "RIGHT", 12, 0)
+    name:SetWidth(0); name:SetWordWrap(false) -- one line; never wrap a long name
+    name:SetPoint("LEFT", icon, "RIGHT", 8, 0)
     name:SetJustifyH("LEFT")
     name:Show()
 
     bar:Hide()
 
-    local totalW = PAD + ICON_SIZE + 12 + 240 + PAD
+    -- base width (the icon + a nominal name budget); RenderTick/showSample shrink
+    -- the frame to hug the ACTUAL text via fitHudWidth so the box isn't oversized.
+    local totalW = PAD + isz + 8 + 240 + PAD
     if tpos == "icon" then
       count:SetPoint("CENTER", icon, "CENTER", 0, 0)
       count:SetJustifyH("CENTER")
+      -- the icon now matches the text height, so shrink the in-icon number to fit
+      if fontPath and count.SetFont then count:SetFont(fontPath, math.max(9, isz - 4), "OUTLINE") end
     else
-      count:SetPoint("LEFT", name, "RIGHT", 10, 0)
+      count:SetPoint("LEFT", name, "RIGHT", 8, 0)
       count:SetJustifyH("LEFT")
     end
     count:Show()
-    hud:SetSize(totalW, ICON_SIZE + 4)
+    hud:SetSize(totalW, math.max(isz, size) + 4)
   end
+
+  -- Stable countdown reserve: measure a max-width template with the active count
+  -- font so fitHudWidth reserves a CONSTANT slot for the number. Otherwise the
+  -- frame width tracked the number's glyph width and the box jittered left/right
+  -- each tick under centre/right alignment.
+  do
+    -- reserve the widest 1-digit-decimal ("8.8"; "8" is a wide glyph). fitHudWidth
+    -- uses this FIXED reserve for the number, so 1-digit countdowns (the common
+    -- case) sit in a CONSTANT slot with no per-tick jitter from proportional glyph
+    -- widths. A rare 2-digit "10.0" pokes a hair past the edge for a moment.
+    local prevCount = count:GetText()
+    count:SetText("8.8")
+    hud._countReserve = count:GetStringWidth() or 0
+    count:SetText(prevCount or "")
+  end
+
+  -- A free-text note has no icon. In the text ("iconName") style, hide the icon
+  -- and pull the message to the far left so it STARTS where the icon would be,
+  -- no reserved gap. Record what we laid out so RenderTick relayouts only when
+  -- the note/spell state actually flips (this fn otherwise only runs on options).
+  if isNote and style ~= "bar" and style ~= "icon" then
+    icon:Hide()
+    if tpos == "icon" then
+      -- "time in icon", but a note has no icon: the countdown takes the front
+      -- slot where the icon would be, and the message follows to its right.
+      count:ClearAllPoints()
+      count:SetPoint("LEFT", hud, "LEFT", PAD, 0); count:SetJustifyH("LEFT")
+      -- a note has no icon, so undo the in-icon font shrink; match the text size
+      if fontPath and count.SetFont then count:SetFont(fontPath, size, "OUTLINE") end
+      name:ClearAllPoints()
+      name:SetPoint("LEFT", count, "RIGHT", 8, 0)
+    else
+      -- "time on the right": message starts at the far left, the time trails it
+      -- (layoutHud's right branch already anchored count to the name's right).
+      name:ClearAllPoints()
+      name:SetPoint("LEFT", hud, "LEFT", PAD, 0)
+    end
+    name:SetWordWrap(false)
+  end
+  hud._isNote = isNote and true or false
 end
 ns.Reminders._layoutHud = layoutHud
+
+-- Shrink the HUD frame to hug its ACTUAL content (the background box is
+-- SetAllPoints, so a fixed name budget made it far wider than short text). Only
+-- the "iconName" style has a name budget worth trimming; "icon"/"bar" keep their
+-- deliberate sizes. Call AFTER the name/count text is set (GetStringWidth needs
+-- the final text). The HUD is CENTRE-anchored, so the box grows/shrinks around
+-- its centre; the fixed count reserve keeps the width constant per cue (no
+-- per-tick jitter), and the block re-centres only when a new cue's name differs.
+local function fitHudWidth(o, isNote)
+  if (o.hudStyle or "iconName") ~= "iconName" then return end
+  local PAD = 6
+  local tpos = o.timePos or "icon"
+  local nameW = (hud.name:GetStringWidth() or 0)
+  -- FIXED countdown reserve so the frame width is CONSTANT, never track the live
+  -- number's glyph width, or the centre-anchored frame would jitter left/right
+  -- each tick. 1-digit numbers fit snugly; a rare 2-digit "10.0" just pokes a
+  -- hair past the edge for a moment (still no reflow).
+  local countW = hud._countReserve or 0
+  local w
+  if isNote then
+    if tpos == "icon" then w = PAD + countW + 8 + nameW + PAD   -- [count][name]
+    else                   w = PAD + nameW + 8 + countW + PAD   -- [name][count]
+    end
+  else
+    local isz = math.max(14, o.fontSize or 28)                  -- icon = text height
+    w = PAD + isz + 8 + nameW + PAD                             -- [icon][name]
+    if tpos == "right" then w = w + 8 + countW end              -- + [count]
+  end
+  hud:SetWidth(math.max(w, PAD * 2 + 24))
+end
+ns.Reminders._fitHudWidth = fitHudWidth
 
 -- ── upcoming queue rows (mini-HUD at 50% - follows hudStyle + timePos) ─────────
 -- Each row is a scaled-down copy of the HUD: it honors the same display style
@@ -426,7 +548,11 @@ local function layoutQueueRow(row, style, tpos, size, countSize, isize, fontPath
   else -- iconName
     icon:SetSize(isize, isize); icon:SetPoint("LEFT", row, "LEFT", PAD, 0); icon:Show()
     local nameW = math.floor(240 * QUEUE_SCALE)
-    name:SetWidth(nameW); name:SetPoint("LEFT", icon, "RIGHT", 6, 0); name:Show()
+    -- No fixed width + no wrap: the name stays on ONE line and the time (count)
+    -- sits right after the text, mirroring the main HUD. A fixed width both
+    -- wrapped long names and pushed the count out to a fixed far-right column.
+    name:SetWidth(0); name:SetWordWrap(false)
+    name:SetPoint("LEFT", icon, "RIGHT", 6, 0); name:Show()
     bar:Hide()
     local totalW = PAD + isize + 6 + nameW + PAD
     if tpos == "icon" then
@@ -443,12 +569,12 @@ end
 local function layoutQueueRows(o)
   local style = o.hudStyle or "iconName"
   local tpos = o.timePos or "icon"
-  local fontPath = GameFontNormalHuge:GetFont()
+  local fontPath = resolveFont(o)
   local size = math.max(8, math.floor((o.fontSize or 28) * QUEUE_SCALE))
   local countSize = (tpos == "icon") and (size + math.floor(10 * QUEUE_SCALE)) or size
-  local isize = math.max(14, math.floor(ICON_SIZE * QUEUE_SCALE))
+  local isize = math.max(10, size) -- icon matches the queue text height (not 52*scale)
   local c = o.textColor or { r = 1, g = 0.95, b = 0.4 }
-  local top = 16 -- header band
+  local top = QUEUE_PAD -- no header band (the "Next up" caption was removed)
   local n = o.queueCount or 3
 
   local maxW, rowH = 1, isize
@@ -467,9 +593,50 @@ local function layoutQueueRows(o)
   for i = n + 1, #queue.rows do
     if queue.rows[i] and queue.rows[i].Hide then queue.rows[i]:Hide() end
   end
+  -- stable count reserve for fitQueueWidth (mirrors the HUD's _countReserve so a
+  -- ticking queue number does not jitter the row width). Measured with row 1's
+  -- count font, set by layoutQueueRow above.
+  local r1 = queue.rows[1]
+  if r1 and r1.count then
+    local prev = r1.count:GetText()
+    r1.count:SetText("8.8")
+    queue._countReserve = r1.count:GetStringWidth() or 0
+    r1.count:SetText(prev or "")
+  end
   queue:SetWidth(maxW + QUEUE_PAD * 2)
   queue:SetHeight(top + n * (rowH + QUEUE_GAP) + QUEUE_PAD)
 end
+
+-- Shrink each visible queue row (and the queue frame) to hug its actual text,
+-- mirroring fitHudWidth. Runs after RenderTick/showSample set the row texts. Only
+-- the "iconName" style has a name budget worth trimming; icon/bar keep their sizes.
+local function fitQueueWidth(o)
+  if (o.hudStyle or "iconName") ~= "iconName" then return end
+  local tpos = o.timePos or "icon"
+  local size = math.max(8, math.floor((o.fontSize or 28) * QUEUE_SCALE))
+  local isize = math.max(10, size)
+  local reserve = queue._countReserve or 0
+  local maxW = 1
+  for _, row in ipairs(queue.rows) do
+    if row:IsShown() then
+      local nameW = row.name:GetStringWidth() or 0
+      local w
+      if row.icon:IsShown() then
+        w = 3 + isize + 6 + nameW                       -- [icon][name]
+        if tpos == "right" then w = w + 5 + reserve end -- + [count]
+      elseif tpos == "icon" then
+        w = 3 + reserve + 5 + nameW                     -- note, time in front: [count][name]
+      else
+        w = 3 + nameW + 5 + reserve                     -- note, time on right: [name][count]
+      end
+      w = w + 3
+      row:SetWidth(w)
+      if w > maxW then maxW = w end
+    end
+  end
+  queue:SetWidth(maxW + QUEUE_PAD * 2)
+end
+ns.Reminders._fitQueueWidth = fitQueueWidth
 
 function Reminders.Init()
   ensureFrames()
@@ -483,21 +650,24 @@ local function showSample(o)
   o = o or ns.DB.Options()
   layoutHud(o)
   layoutQueueRows(o)
+  local sc = validColor(o.textColor) and o.textColor or { r = 1, g = 0.95, b = 0.4 }
   if hud.icon then hud.icon:SetTexture(136235) end -- generic icon
-  hud.name:SetText("Cooldown name")
-  hud.count:SetText("3")
+  hud.name:SetText("Cooldown name"); hud.name:SetTextColor(sc.r, sc.g, sc.b)
+  hud.count:SetText("3"); hud.count:SetTextColor(sc.r, sc.g, sc.b)
   hud.bar:SetValue(0.6)
+  fitHudWidth(o, false) -- preview box hugs the sample text, not the name budget
   hud.bg:Show(); hud.label:Show(); hud:Show(); hud._active = true
   local qr = queue.rows[1]
   if qr and qr.icon then
-    local mc = o.textColor or { r = 1, g = 0.95, b = 0.4 }
+    local mc = validColor(o.textColor) and o.textColor or { r = 1, g = 0.95, b = 0.4 }
     qr.icon:SetTexture(136235); qr.icon:Show()
     qr.name:SetText("Next cooldown"); qr.name:SetTextColor(mc.r, mc.g, mc.b)
     if qr.barName then qr.barName:SetText("Next cooldown"); qr.barName:SetTextColor(mc.r, mc.g, mc.b) end
-    qr.count:SetText("12"); qr.count:SetTextColor(1, 1, 1)
+    qr.count:SetText("12"); qr.count:SetTextColor(mc.r, mc.g, mc.b)
     if qr.bar then qr.bar:SetValue(0.6); qr.bar:SetStatusBarColor(mc.r, mc.g, mc.b) end
     qr:Show()
   end
+  fitQueueWidth(o) -- preview queue hugs its sample text too
   queue.bg:Show(); queue.label:Show(); queue:Show(); queue._live = true
 end
 
@@ -575,35 +745,33 @@ function Reminders.SetLocked(locked)
 end
 
 -- Reset HUD + queue to their out-of-box positions (the "Reset" button).
--- Queue is placed directly below the HUD, left edges aligned, by anchoring it
--- relative to the HUD frame - so it works correctly regardless of HUD width.
+-- Queue is placed centred directly BELOW the HUD, by anchoring it relative to the
+-- HUD frame - so it stays centred regardless of HUD width.
 local QUEUE_BELOW_GAP = 8
 function Reminders.ResetPositions()
   ensureFrames()
   local o = ns.DB.Options()
-  -- 1. Restore HUD to its canonical default, then lay it out for the active
-  --    style/timePos so the ICON sits exactly where it will render. The frame
-  --    WIDTH changes per style (icon / iconName / bar), and the frame is
-  --    CENTER-anchored, so the frame's left edge shifts with style - but the
-  --    icon is the stable visual anchor the user lines up against.
+  -- 1. Restore HUD to its canonical default (screen centre) and lay it out. The
+  --    HUD is centre-anchored, so the block stays centred on that coordinate; the
+  --    default (0,0) puts it dead-centre.
   local hudDef = ns.DB.DefaultPositions()
   for k, v in pairs(hudDef) do o.hud[k] = v end
   restorePosition(hud, o.hud)
   layoutHud(o)
 
-  -- 2. Align the queue's top-left under the HUD ICON (not the frame edge), then
-  --    convert that to UIParent-CENTER-relative coordinates so the
-  --    savePosition/restorePosition pair (which is UIParent-based) reproduces
-  --    the same spot on /reload.
-  local anchor = hud.icon or hud
+  -- 2. Centre the queue's top under the HUD's bottom-centre, then persist it as a
+  --    TOP(-centre)-anchored UIParent-CENTER position. Anchoring by TOP (not
+  --    TOPLEFT) keeps the queue CENTRED as its width changes cue-to-cue, instead
+  --    of growing rightward from a pinned left edge (which looked like drifting).
   queue:ClearAllPoints()
-  queue:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -QUEUE_BELOW_GAP)
-  local left, top = queue:GetLeft(), queue:GetTop()
+  queue:SetPoint("TOP", hud, "BOTTOM", 0, -QUEUE_BELOW_GAP)
+  local qL, qW, top = queue:GetLeft(), queue:GetWidth(), queue:GetTop()
   local cx, cy = UIParent:GetCenter()
-  if left and top and cx and cy then
-    -- 3a. Re-anchor to UIParent CENTER at the resolved spot and persist it.
+  local qcx = (qL and qW) and (qL + qW / 2) or nil
+  if qcx and top and cx and cy then
+    -- 3a. Re-anchor the queue's TOP-centre to UIParent CENTER and persist it.
     queue:ClearAllPoints()
-    queue:SetPoint("TOPLEFT", UIParent, "CENTER", left - cx, top - cy)
+    queue:SetPoint("TOP", UIParent, "CENTER", qcx - cx, top - cy)
     savePosition(queue, o.queueAnchor)
   else
     -- 3b. Frame rect not realized yet → GetLeft/GetTop returned nil. Do NOT
@@ -615,6 +783,10 @@ function Reminders.ResetPositions()
     for k, v in pairs(queueDef) do o.queueAnchor[k] = v end
     restorePosition(queue, o.queueAnchor)
   end
+  -- Re-show the preview so it re-fits at the reset spot. Without this, the last
+  -- layoutHud left the HUD at its wide "budget" width, and the centre anchor then
+  -- shifted the sample text sideways until the next render refit it.
+  refreshFrames(o)
   ns.Print("frame positions reset to default.")
 end
 
@@ -782,15 +954,20 @@ function Reminders.RenderTick(active, upcoming, o)
   if active and o.textEnabled then
     local cue = active.cue
     local isBoss = cue.kind == "boss"
-    local _, icon = spellInfo(cue.spellId)
-    -- icon texture only; layoutHud already decided icon Show/Hide for the style
-    if icon then hud.icon:SetTexture(icon) end
+    -- A note has no icon and its text starts at the far left; a spell shows its
+    -- icon. layoutHud owns that split, so relayout only when the state FLIPS
+    -- (this tick is otherwise value-only). applyCueIcon then blanks the note icon
+    -- (harmless while hidden) or sets the spell/"?" texture, never a stale one.
+    local isNote = (not cue.spellId or cue.spellId == 0)
+    if isNote ~= hud._isNote then layoutHud(o, isNote) end
+    applyCueIcon(hud.icon, cue)
     local c = isBoss and { r = 1, g = 0.45, b = 0.3 } or (validColor(o.textColor) and o.textColor or { r = 1, g = 0.95, b = 0.4 })
     -- update name TEXT/color only; layoutHud owns whether name (or barName, the
     -- in-bar variant for the "bar" style) is shown for the style
     local nameText = (isBoss and "|cffff7777[BOSS]|r " or "") .. labelFor(cue)
     hud.name:SetText(nameText)
     hud.name:SetTextColor(c.r, c.g, c.b)
+    hud.count:SetTextColor(c.r, c.g, c.b) -- time follows the text color too
     if hud.barName then
       hud.barName:SetText(nameText)
       hud.barName:SetTextColor(c.r, c.g, c.b)
@@ -798,7 +975,9 @@ function Reminders.RenderTick(active, upcoming, o)
     local total = active.total or (o.leadSeconds or 4)
     local rem = active.remaining
     if rem > 0 then
-      hud.count:SetText(tostring(math.ceil(rem)))
+      -- decimal only when the time sits on the RIGHT (there's room); inside the
+      -- icon/bar a "12.5" overflows the 52px icon, so keep it integer there.
+      hud.count:SetText(o.timePos == "right" and string.format("%.1f", rem) or tostring(math.ceil(rem)))
       hud.bar:SetValue(math.max(0, math.min(1, total > 0 and rem / total or 0)))
       hud.bar:SetStatusBarColor(c.r, c.g, c.b)
     else
@@ -806,6 +985,7 @@ function Reminders.RenderTick(active, upcoming, o)
       hud.bar:SetValue(1)
       hud.bar:SetStatusBarColor(1, 0.2, 0.2) -- NOW
     end
+    fitHudWidth(o, isNote) -- shrink the box to the actual text (name/count set)
     hud._active = true
     hud:Show()
   elseif not testOn then
@@ -824,9 +1004,38 @@ function Reminders.RenderTick(active, upcoming, o)
       if item and row.icon then
         local cue = item.cue
         local isBoss = cue.kind == "boss"
-        local _, icon = spellInfo(cue.spellId)
-        if icon then row.icon:SetTexture(icon) end
-        row.icon:Show()
+        applyCueIcon(row.icon, cue)
+        -- Mirror the HUD: a note (text style) drops its icon and starts the text
+        -- at the far left; a spell keeps its icon with the name to its right.
+        local isNote = (not cue.spellId or cue.spellId == 0)
+        local tpos = o.timePos or "icon"
+        local textStyle = (style ~= "bar" and style ~= "icon")
+        row.name:ClearAllPoints()
+        if isNote and textStyle then
+          row.icon:Hide()
+          if tpos == "icon" then
+            -- no icon: the countdown takes the front slot, message follows it
+            row.count:ClearAllPoints()
+            row.count:SetPoint("LEFT", row, "LEFT", 3, 0); row.count:SetJustifyH("LEFT")
+            row.name:SetPoint("LEFT", row.count, "RIGHT", 5, 0)
+          else
+            row.name:SetPoint("LEFT", row, "LEFT", 3, 0)
+            row.count:ClearAllPoints()
+            row.count:SetPoint("LEFT", row.name, "RIGHT", 5, 0); row.count:SetJustifyH("LEFT")
+          end
+        elseif textStyle then
+          row.icon:Show()
+          row.name:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
+          -- restore the count anchor a prior note row in this slot may have moved
+          row.count:ClearAllPoints()
+          if tpos == "icon" then
+            row.count:SetPoint("CENTER", row.icon, "CENTER", 0, 0); row.count:SetJustifyH("CENTER")
+          else
+            row.count:SetPoint("LEFT", row.name, "RIGHT", 5, 0); row.count:SetJustifyH("LEFT")
+          end
+        else
+          row.icon:Show() -- bar/icon styles: layoutQueueRow owns the anchors
+        end
         local c = isBoss and { r = 1, g = 0.45, b = 0.3 } or def
         -- layoutQueueRow owns name vs barName Show/Hide per style; just set both
         local nameText = (isBoss and "|cffff7777[B]|r " or "") .. labelFor(cue)
@@ -836,8 +1045,10 @@ function Reminders.RenderTick(active, upcoming, o)
           row.barName:SetText(nameText)
           row.barName:SetTextColor(c.r, c.g, c.b)
         end
-        row.count:SetText(tostring(math.max(0, math.ceil(item.remaining))))
-        row.count:SetTextColor(1, 1, 1)
+        row.count:SetText(o.timePos == "right"
+          and string.format("%.1f", math.max(0, item.remaining))
+          or tostring(math.max(0, math.ceil(item.remaining))))
+        row.count:SetTextColor(c.r, c.g, c.b)
         if style == "bar" and row.bar then
           row.bar:SetValue(math.max(0, math.min(1, lead > 0 and item.remaining / lead or 0)))
           row.bar:SetStatusBarColor(c.r, c.g, c.b)
@@ -847,6 +1058,7 @@ function Reminders.RenderTick(active, upcoming, o)
         row:Hide()
       end
     end
+    fitQueueWidth(o) -- shrink rows/queue to the actual text (after texts are set)
     queue._live = true
     queue:Show()
   elseif not testOn then

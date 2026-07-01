@@ -12,30 +12,33 @@ ns.WhatsNew = WhatsNew
 
 -- Bump ONLY when there is news to show. Login compares it to CoolPlanDB.lastWhatsNew;
 -- equal → nothing shows. A routine addon bump with no WhatsNew change stays silent.
-WhatsNew.version = "1.7.0"
+WhatsNew.version = "1.8.0"
 
 -- Per-language body. Color codes (|c…|r) render in FontStrings. The "Important" line
 -- is gold so the re-export requirement stands out.
 local BODY = {
   en = table.concat({
-    "Version update: raid bosses with shifting phases now work with your cooldown plan.",
+    "Version update: you can now add your own text cues to a plan.",
     "",
-    "Affected raid bosses:",
-    "|cffffcc00Crown of the Cosmos|r  /  |cffffcc00L'ura (Midnight Falls)|r  /  |cffffcc00Belo'ren, Child of Al'ar|r",
+    "On the site, click an empty spot on a player's timeline and type any text",
+    "(e.g. |cffffcc00\"Shield NOW\"|r) — it shows on the HUD and is read aloud (TTS),",
+    "just like a spell.",
     "",
-    "|cffffcc00Important:|r re-grab these bosses' plans from the site (re-grabbing all is fine too, other bosses are not affected).",
+    "New |cffffcc00Custom note|r category (its own color) — toggle it under",
+    "Options > Show categories.",
     "",
     "Not working, or you see an error? Tell us on Discord and we will fix it.",
     "",
     "|cff66b3ffcoolplan.team|r",
   }, "\n"),
   ko = table.concat({
-    "버전 업데이트: 가변형 페이즈 레이드 보스도 이제 플랜대로 작동합니다.",
+    "버전 업데이트: 이제 플랜에 원하는 문구(커스텀 알림)를 직접 넣을 수 있습니다.",
     "",
-    "적용 레이드 보스:",
-    "|cffffcc00우주의 왕관|r  /  |cffffcc00르우라 (미드나잇 폴스)|r  /  |cffffcc00벨로렌|r",
+    "사이트에서 플레이어 타임라인의 빈 곳을 클릭해 아무 문구나 입력하면",
+    "(예: |cffffcc00\"지금 생존기\"|r) 스킬처럼 HUD에 표시되고 음성(TTS)으로도 읽어줍니다.",
     "",
-    "|cffffcc00중요:|r 해당 보스의 플랜만 새로 받으면 됩니다 (전체를 받아도 무방, 다른 보스는 영향 없음).",
+    "전용 |cffffcc00커스텀 노트|r 카테고리(별도 색)가 추가됐습니다 —",
+    "옵션 > 카테고리 표시에서 켜고 끌 수 있습니다.",
     "",
     "제대로 동작하지 않거나 오류가 발생하면 디스코드로 알려 주세요. 신속히 수정하겠습니다.",
     "",

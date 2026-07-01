@@ -228,7 +228,11 @@ local function renderCanvas()
     local x = LABEL_W + (displayTime(item) / 1000) * pps
     m:SetPoint("TOPLEFT", canvas, "TOPLEFT", x - ICON / 2, rowTop)
     local icon = spellIcon(spellId)
-    if icon then
+    if not spellId or spellId == 0 then
+      -- a free-text note has no spell art: show the neutral "?" so it still reads
+      -- as a marker on the timeline (the live HUD instead drops the icon entirely).
+      m.tex:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark"); m.tex:Show(); m.dot:Hide()
+    elseif icon then
       m.tex:SetTexture(icon); m.tex:Show(); m.dot:Hide()
     else
       m.tex:Hide(); m.dot:Show()
@@ -411,7 +415,15 @@ local function startTest(speed)
   local ok = ns.Scheduler.StartPreview(p.reminders, p.boss, speed,
     function(elapsed) setPlayhead(elapsed) end, selPreviewAs, phaseStart)
   if not ok then
-    if status then status:SetText("|cffffcc00Nothing to play. This note has no cooldowns. Pick another boss / note above.|r") end
+    if status then
+      if p.reminders and #p.reminders > 0 then
+        -- the note DOES have cooldowns, but the category filter (or the "Preview
+        -- as" player) removed them all. Point at the filter, not "no cooldowns".
+        status:SetText("|cffffcc00Nothing to play. Your 'Show categories' filter (or the 'Preview as' player) is hiding these. Enable more under Options.|r")
+      else
+        status:SetText("|cffffcc00Nothing to play. This note has no cooldowns. Pick another boss / note above.|r")
+      end
+    end
     return
   end
   if testBtn then testBtn:SetText("Stop") end

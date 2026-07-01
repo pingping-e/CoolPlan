@@ -1108,10 +1108,12 @@ end
 -- here - boss timelines are display-only (the Timeline view's red boss track),
 -- never on-screen/sound/TTS alerts (BigWigs/DBM already cover boss mechanics).
 -- previewAll: the Timeline "Test" is a preview of the whole plan, so it must NOT
--- filter to the logged-in character's name or hide categories - otherwise testing
--- on a different char (or with log/team names that don't match) shows nothing.
+-- filter to the logged-in character's NAME - otherwise testing on a different
+-- char (or with log/team names that don't match) shows nothing. The "Show
+-- categories" filter, however, DOES apply in preview: it's the user's choice of
+-- which cue types they want to see, so the test should reflect it (matches live).
 -- forPlayer (preview only): show that exact player's casts (+ always-shown
--- categories), ignoring the live "only me"/category filters.
+-- categories), ignoring the live "only me" NAME filter.
 -- `_boss` is accepted (call-site symmetry) but unused: boss cues are not fired.
 local function buildCues(reminders, _boss, previewAll, forPlayer)
   local o = ns.DB.Options()
@@ -1133,7 +1135,7 @@ local function buildCues(reminders, _boss, previewAll, forPlayer)
     else
       meOk = previewAll or common or (not o.filterToMe) or nameMatchesMe(r.player)
     end
-    if meOk and (previewAll or forPlayer or ns.DB.CategoryEnabled(r.category)) then
+    if meOk and ns.DB.CategoryEnabled(r.category) then
       cues[#cues + 1] = {
         kind = "cd", timeMs = r.timeMs, spellId = r.spellId, phaseIndex = r.phaseIndex,
         player = r.player, category = r.category, spellName = r.spellName, alert = r.alert,

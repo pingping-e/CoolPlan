@@ -27,22 +27,23 @@ local defaults = {
     soundKit = "RAID_WARNING",
     countdownVoice = false, -- speak a 3-2-1 TTS countdown before each cue (separate from spell-name TTS)
     scale = 1.0,
-    fontSize = 28,
-    hudStyle = "icon",        -- "icon" | "iconName" | "bar"
-    timePos = "icon",         -- "icon" (inside icon/bar) | "right" (separate, on the right)
+    fontSize = 25,
+    hudStyle = "iconName",    -- "icon" | "iconName" | "bar"
+    timePos = "right",        -- "icon" (inside icon/bar) | "right" (separate, on the right)
     textColor = { r = 1, g = 1, b = 1 },
     showQueue = true,
     queueCount = 2,
     queueWindow = 10,         -- only show queued cues casting within N seconds (10–30)
     categoryEnabled = {},
-    hud = { point = "CENTER", relPoint = "CENTER", x = 0, y = 200, locked = true },
-    -- queue sits BELOW the HUD, left edges aligned (HUD is 440 wide → left edge
-    -- at -220 from screen centre; HUD bottom ≈ y 164, so 150 leaves a small gap).
-    queueAnchor = { point = "TOPLEFT", relPoint = "CENTER", x = -220, y = 150, locked = true },
+    hud = { point = "CENTER", relPoint = "CENTER", x = 0, y = 0, locked = true },
+    -- queue sits centred directly BELOW the HUD (top-centre anchored to screen
+    -- centre, a little under the HUD block). ResetPositions recomputes it exactly
+    -- from the live HUD; this is the first-load / fallback value.
+    queueAnchor = { point = "TOP", relPoint = "CENTER", x = 0, y = -40, locked = true },
     showGrid = true,          -- show an alignment grid while in move mode
     lastPage = "timeline",
     minimap = { angle = 210, hide = false },
-    windowW = 940, windowH = 640,  -- windowW matches Window.lua MIN_W
+    windowW = 940, windowH = 700,  -- matches Window.lua MIN_W / min height
   },
 }
 
@@ -161,12 +162,12 @@ function DB.Init()
     opt.alertSound = "sound"
     opt.soundKit = "RAID_WARNING"
     opt.leadSeconds = 5
-    opt.soundLeadSeconds = 3
+    opt.soundLeadSeconds = 0
     opt.categoryEnabled = {}
     opt.scale = 1.0
-    opt.fontSize = 28
+    opt.fontSize = 25
     opt.hudStyle = "iconName"
-    opt.timePos = "icon"
+    opt.timePos = "right"
     opt.textColor = { r = 1, g = 1, b = 1 }
     opt.showQueue = true
     opt.queueCount = 2
@@ -192,22 +193,21 @@ end
 
 function DB.Options() return CoolPlanDB.options end
 
--- Reset the Options-page settings to defaults. Frame positions, window size,
--- minimap and last page are PRESERVED (the HUD has its own "Reset position"),
--- as is the saved-plan library (per-character, untouched). Caller should
--- ReloadUI afterwards so the Options widgets rebuild against the fresh values.
+-- Reset the Options-page settings to defaults, INCLUDING the HUD/queue frame
+-- positions (back to the centred default). Window size, minimap and last page are
+-- preserved (they're app-window state, not alert settings), as is the saved-plan
+-- library (per-character, untouched). Caller should ReloadUI afterwards so the
+-- Options widgets rebuild against the fresh values.
 function DB.ResetOptions()
   local o = CoolPlanDB.options
   if not o then return end
   local keep = {
-    hud = o.hud, queueAnchor = o.queueAnchor,
-    windowW = o.windowW, windowH = o.windowH,
+    windowW = o.windowW, windowH = o.windowH, windowScale = o.windowScale,
     minimap = o.minimap, lastPage = o.lastPage,
   }
   if wipe then wipe(o) else for k in pairs(o) do o[k] = nil end end
   deepFill(o, defaults.options)             -- deep-copies every default back in
-  o.hud, o.queueAnchor = keep.hud, keep.queueAnchor
-  o.windowW, o.windowH = keep.windowW, keep.windowH
+  o.windowW, o.windowH, o.windowScale = keep.windowW, keep.windowH, keep.windowScale
   o.minimap, o.lastPage = keep.minimap, keep.lastPage
 end
 -- Default frame positions (for the "Reset" button), copied so callers can't

@@ -119,9 +119,12 @@ local function build()
   -- grow past the screen and put the resize grip out of reach.
   local MIN_W = 940
   local maxW = math.min(1600, math.max(MIN_W, (UIParent:GetWidth() or 1280) - 40))
-  local maxH = math.min(1000, math.max(640, (UIParent:GetHeight() or 800) - 40))
+  local maxH = math.min(1000, math.max(700, (UIParent:GetHeight() or 800) - 40))
   local function clampSize(v, lo, hi) return math.min(math.max(v or lo, lo), hi) end
-  f:SetSize(clampSize((o and o.windowW) or MIN_W, MIN_W, maxW), clampSize((o and o.windowH) or 640, 620, maxH))
+  -- min height 700: the Options page stacks Timing+Queue and the category grid in
+  -- the middle/left, and the bottom action row is pinned to the frame bottom, a
+  -- shorter frame let those buttons ride up over the last category rows.
+  f:SetSize(clampSize((o and o.windowW) or MIN_W, MIN_W, maxW), clampSize((o and o.windowH) or 700, 700, maxH))
   f:SetPoint("CENTER")
   f:SetFrameStrata("DIALOG")
   f:SetMovable(true)
@@ -135,9 +138,9 @@ local function build()
   -- so they reflow automatically. Size is saved across sessions.
   f:SetResizable(true)
   if f.SetResizeBounds then
-    f:SetResizeBounds(MIN_W, 620, maxW, maxH)
+    f:SetResizeBounds(MIN_W, 700, maxW, maxH)
   elseif f.SetMinResize then
-    f:SetMinResize(MIN_W, 620)
+    f:SetMinResize(MIN_W, 700)
     if f.SetMaxResize then f:SetMaxResize(maxW, maxH) end
   end
   local grip = CreateFrame("Button", nil, f)
@@ -216,6 +219,45 @@ local function build()
 
   local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", -4, -4)
+
+  -- Window scale slider (top-left). Drag to zoom the whole window 50%-150%.
+  -- SetScale scales the frame and all children uniformly; the saved size stays in
+  -- unscaled units, so scale is independent of the resize grip. Persisted in
+  -- o.windowScale so small screens can shrink the window to fit.
+  local function clampScale(s) return math.min(1.5, math.max(0.5, tonumber(s) or 1)) end
+  f:SetScale(clampScale(o and o.windowScale))
+  local scaleLbl = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  scaleLbl:SetPoint("TOPLEFT", 16, -16)
+  local function setScaleLabel(v) scaleLbl:SetText(("Scale: |cffffffff%.2f|r"):format(v)) end
+  local scaleSlider = CreateFrame("Slider", "CoolPlanWindowScale", f, "OptionsSliderTemplate")
+  scaleSlider:SetPoint("LEFT", scaleLbl, "RIGHT", 10, 0)
+  scaleSlider:SetWidth(120)
+  scaleSlider:SetHeight(16)
+  scaleSlider:SetMinMaxValues(0.5, 1.5)
+  scaleSlider:SetValueStep(0.05)
+  scaleSlider:SetObeyStepOnDrag(true)
+  do
+    local sn = scaleSlider:GetName()
+    if _G[sn .. "Low"] then _G[sn .. "Low"]:SetText("") end
+    if _G[sn .. "High"] then _G[sn .. "High"]:SetText("") end
+    if _G[sn .. "Text"] then _G[sn .. "Text"]:SetText("") end
+  end
+  scaleSlider:SetValue(clampScale(o and o.windowScale))
+  setScaleLabel(clampScale(o and o.windowScale))
+  -- While dragging, only move the thumb + update the label. Do NOT rescale the
+  -- window mid-drag: SetScale would scale the slider itself, shift the thumb out
+  -- from under the cursor, and make the value jump to an extreme. Apply the new
+  -- scale once, on mouse release.
+  scaleSlider:SetScript("OnValueChanged", ns.wrap(function(self, v)
+    self._pending = clampScale(math.floor(v / 0.05 + 0.5) * 0.05)
+    setScaleLabel(self._pending)
+  end))
+  scaleSlider:SetScript("OnMouseUp", ns.wrap(function(self)
+    local v = clampScale(self._pending or (o and o.windowScale))
+    local oo = ns.DB and ns.DB.Options and ns.DB.Options()
+    if oo then oo.windowScale = v end
+    f:SetScale(v)
+  end))
 
   -- left sidebar
   sidebar = CreateFrame("Frame", nil, f, "BackdropTemplate")

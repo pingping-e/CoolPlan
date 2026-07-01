@@ -17,6 +17,7 @@ local CATEGORIES = {
   { "potion",             "Potion" },
   { "trinket",            "Trinket" },
   { "racial",             "Racial" },
+  { "note",               "Custom note" },
 }
 
 local COLORS = {
@@ -125,7 +126,7 @@ local function showResetConfirm()
     local lbl = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     lbl:SetPoint("TOP", 0, -18)
     lbl:SetWidth(324)
-    lbl:SetText("Reset all CoolPlan settings to defaults?\nYour UI will reload. Saved plans and frame positions are kept.")
+    lbl:SetText("Reset all CoolPlan settings to defaults?\nYour UI will reload. Saved plans are kept; HUD and queue positions reset too.")
     local ok = button(f, OKAY or "Okay", 90, 0, 0, function()
       f:Hide(); ns.DB.ResetOptions(); ReloadUI()
     end)
@@ -175,6 +176,38 @@ function Options.BuildPage(host)
     if v == "right" then return "On the right" else return "In icon/bar" end
   end
 
+  -- Built-in WoW fonts ("" = the locale default; 2002* carry CJK/Korean glyphs).
+  local FONTS = {
+    { "Default",         "" },
+    { "Friz Quadrata",   "Fonts\\FRIZQT__.TTF" },
+    { "Arial Narrow",    "Fonts\\ARIALN.TTF" },
+    { "Skurri",          "Fonts\\SKURRI.TTF" },
+    { "Morpheus",        "Fonts\\MORPHEUS.TTF" },
+    { "2002 (CJK/한글)",  "Fonts\\2002.TTF" },
+    { "2002 Bold (CJK)", "Fonts\\2002B.TTF" },
+  }
+  -- If another addon (ElvUI, WeakAuras, Details…) provides LibSharedMedia, merge
+  -- its whole font registry so there are far more choices. Optional, absent =
+  -- just the built-ins above. We store the resolved PATH so applying it needs no
+  -- LSM at render time.
+  do
+    local LSM = _G.LibStub and _G.LibStub("LibSharedMedia-3.0", true)
+    if LSM and LSM.List and LSM.Fetch then
+      local seen = {}
+      for _, f in ipairs(FONTS) do seen[f[2]] = true end
+      for _, key in ipairs(LSM:List("font") or {}) do
+        local path = LSM:Fetch("font", key, true)
+        if type(path) == "string" and path ~= "" and not seen[path] then
+          FONTS[#FONTS + 1] = { key, path }
+          seen[path] = true
+        end
+      end
+    end
+  end
+  local function fontLabel(v)
+    for _, f in ipairs(FONTS) do if f[2] == (v or "") then return f[1] end end
+    return "Custom"
+  end
   local function syncAlertRows()
     local mode = o.alertSound or "sound"
     if sndBtn then sndBtn:SetEnabled(mode == "sound") end
@@ -270,7 +303,7 @@ function Options.BuildPage(host)
   -- anchoring its container to host TOP keeps it band-centered as the window
   -- resizes, instead of staying glued to the left next to Alerts) ──
   local timingCol = CreateFrame("Frame", nil, host)
-  timingCol:SetSize(200, 150)
+  timingCol:SetSize(200, 360)
   timingCol:SetPoint("TOP", host, "TOP", -16, -8)
   header(timingCol, "Timing", 4, 0)
   slider(timingCol, "On-screen lead (s)", 4, -24, 0, 10, 1,
@@ -320,7 +353,18 @@ function Options.BuildPage(host)
     function() return o.countdownVoice end,
     function(v) o.countdownVoice = v; applyCountdownLock(v) end)
 
-  -- ── right column: HUD ── (parented to rcol → tracks the window's right edge)
+  -- ── upcoming queue (middle column, below Timing, pulled out of the crowded
+  -- HUD column so the right side is HUD appearance only) ──
+  header(timingCol, "Upcoming queue", 4, -170)
+  checkbox(timingCol, "Show queue", 4, -194,
+    function() return o.showQueue end, function(v) o.showQueue = v end)
+  slider(timingCol, "Queue size", 4, -222, 1, 6, 1,
+    function() return o.queueCount or 3 end, function(v) o.queueCount = v end)
+  -- only list queued cues casting within this many seconds (10–30).
+  slider(timingCol, "Queue window (s)", 4, -276, 10, 30, 1,
+    function() return o.queueWindow or 10 end, function(v) o.queueWindow = v end)
+
+  -- ── right column: HUD (appearance only; queue lives in the middle column) ──
   header(rcol, "HUD", RX, -8)
   slider(rcol, "Scale (%)", RX, -32, 50, 200, 5,
     function() return math.floor((o.scale or 1) * 100) end,
@@ -328,9 +372,29 @@ function Options.BuildPage(host)
   slider(rcol, "Font size", RX, -86, 12, 48, 1,
     function() return o.fontSize or 28 end, function(v) o.fontSize = v end)
 
+  -- Font family (built-in fonts; validated with a default fallback in Reminders)
+  local fontLbl = rcol:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  fontLbl:SetPoint("TOPLEFT", RX, -132)
+  fontLbl:SetText("Font:")
+  local fontDD = ns.Window.MakeDropdown(rcol, "CoolPlanOptFontDD", 200,
+    function()
+      local items = {}
+      for _, f in ipairs(FONTS) do items[#items + 1] = { text = f[1], value = f[2] } end
+      return items
+    end,
+    function(v)
+      o.fontFamily = (v ~= "" and v) or nil
+      if ns.Reminders then ns.Reminders.ApplyOptions() end
+    end)
+  fontDD:SetPoint("TOPLEFT", RX - 8, -150)
+  fontDD:SetValue(o.fontFamily or "", fontLabel(o.fontFamily))
+
+  -- (HUD alignment is fixed to centre; the block hugs its text and centres on
+  -- the anchor. The left/right options were removed as they only added footguns.)
+
   -- HUD display style (icon only / icon + name / bar)
   local styleLabel = rcol:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  styleLabel:SetPoint("TOPLEFT", RX, -132)
+  styleLabel:SetPoint("TOPLEFT", RX, -188)
   styleLabel:SetText("Display style:")
   styleDD = ns.Window.MakeDropdown(rcol, "CoolPlanOptStyleDD", 200,
     function()
@@ -344,12 +408,12 @@ function Options.BuildPage(host)
       o.hudStyle = v
       if ns.Reminders then ns.Reminders.ApplyOptions() end
     end)
-  styleDD:SetPoint("TOPLEFT", RX - 8, -150)
+  styleDD:SetPoint("TOPLEFT", RX - 8, -206)
   styleDD:SetValue(o.hudStyle or "iconName", hudStyleLabel(o.hudStyle))
 
   -- time (countdown) position (inside the icon/bar / separate on the right)
   local timePosLbl = rcol:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  timePosLbl:SetPoint("TOPLEFT", RX, -188)
+  timePosLbl:SetPoint("TOPLEFT", RX, -244)
   timePosLbl:SetText("Time position:")
   timePosDD = ns.Window.MakeDropdown(rcol, "CoolPlanOptTimePosDD", 200,
     function()
@@ -362,17 +426,17 @@ function Options.BuildPage(host)
       o.timePos = v
       if ns.Reminders then ns.Reminders.ApplyOptions() end
     end)
-  timePosDD:SetPoint("TOPLEFT", RX - 8, -206)
+  timePosDD:SetPoint("TOPLEFT", RX - 8, -262)
   timePosDD:SetValue(o.timePos or "icon", timePosLabel(o.timePos))
 
   local colorLabel = rcol:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  colorLabel:SetPoint("TOPLEFT", RX, -244)
+  colorLabel:SetPoint("TOPLEFT", RX, -300)
   colorLabel:SetText("Text color:")
   local cx = RX
   for _, col in ipairs(COLORS) do
     local sw = CreateFrame("Button", nil, rcol)
     sw:SetSize(22, 22)
-    sw:SetPoint("TOPLEFT", cx, -262)
+    sw:SetPoint("TOPLEFT", cx, -318)
     local tex = sw:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints()
     tex:SetColorTexture(col[1], col[2], col[3])
@@ -384,40 +448,31 @@ function Options.BuildPage(host)
     cx = cx + 28
   end
 
-  -- ── right column: queue ──
-  header(rcol, "Upcoming queue", RX, -298)
-  checkbox(rcol, "Show queue", RX, -322,
-    function() return o.showQueue end, function(v) o.showQueue = v end)
-  slider(rcol, "Queue size", RX, -350, 1, 6, 1,
-    function() return o.queueCount or 3 end, function(v) o.queueCount = v end)
-  -- only list queued cues casting within this many seconds (10–30).
-  slider(rcol, "Queue window (s)", RX, -404, 10, 30, 1,
-    function() return o.queueWindow or 10 end, function(v) o.queueWindow = v end)
-
   -- ── right column: position ──
   -- (boss mechanics are intentionally NOT alerted here - BigWigs/DBM already
   -- call those out; CoolPlan focuses on the team's cooldowns.)
-  header(rcol, "Position", RX, -458)
+  header(rcol, "Position", RX, -354)
   -- Test = show/hide preview frames; Move = toggle dragging them (label flips to
   -- Lock). The two are independent (Move drags whatever is shown).
-  local testBtn = button(rcol, "Test frames", 110, RX, -480, function() ns.Reminders.ToggleTest() end)
-  local moveBtn = button(rcol, "Move", 90, RX + 118, -480, function() ns.Reminders.ToggleMover() end)
+  local testBtn = button(rcol, "Test frames", 110, RX, -376, function() ns.Reminders.ToggleTest() end)
+  local moveBtn = button(rcol, "Move", 90, RX + 118, -376, function() ns.Reminders.ToggleMover() end)
   ns.Reminders.SetModeButtonUpdater(function(moving, testing)
     if moveBtn then moveBtn:SetText(moving and "Lock" or "Move") end
     if testBtn then testBtn:SetText(testing and "Hide test" or "Test frames") end
   end)
-  button(rcol, "Reset position", 120, RX, -506, function() ns.Reminders.ResetPositions() end)
-  checkbox(rcol, "Show grid", RX, -534,
+  button(rcol, "Reset position", 120, RX, -402, function() ns.Reminders.ResetPositions() end)
+  checkbox(rcol, "Show grid", RX, -430,
     function() return o.showGrid end,
     function(v) o.showGrid = v end)
 
-  -- ── categories (moved up into the freed left/middle space; responsive grid
-  -- that reflows its column count with the window width) ──
-  header(host, "Show categories", LX, -262)
+  -- ── categories (a responsive grid across the lower-left/middle band; it sits
+  -- BELOW the Timing+Queue middle column so its wide rows never overlap them,
+  -- and reflows its column count with the window width) ──
+  header(host, "Show categories", LX, -344)
   local catBoxes = {}
   for _, c in ipairs(CATEGORIES) do
     local key = c[1]
-    local cb = checkbox(host, c[2], LX, -288,
+    local cb = checkbox(host, c[2], LX, -368,
       function() return ns.DB.CategoryEnabled(key) end,
       function(v)
         -- enabled = nil (default-on), disabled = false. NOTE: `v and nil or false`
@@ -426,10 +481,14 @@ function Options.BuildPage(host)
       end)
     catBoxes[#catBoxes + 1] = cb
   end
-  local CAT_COL_W, CAT_ROW_H, CAT_Y0 = 185, 28, -288
+  local CAT_COL_W, CAT_ROW_H, CAT_Y0 = 185, 26, -368
   local function layoutCategories()
-    -- keep the grid clear of the right-hand HUD column (~250px)
-    local avail = (host:GetWidth() or 720) - LX - 250
+    -- keep the grid clear of the right-hand HUD column (~250px). Guard a 0 width
+    -- (host rect not realized on the first synchronous call): 0 is truthy in Lua,
+    -- so `or 720` would not catch it, and a negative avail collapses to 1 column.
+    local hw = host:GetWidth()
+    if not hw or hw < 1 then hw = 720 end
+    local avail = hw - LX - 250
     local cols = math.max(1, math.floor(avail / CAT_COL_W))
     for i, cb in ipairs(catBoxes) do
       local c0 = (i - 1) % cols
@@ -461,6 +520,7 @@ function Options.BuildPage(host)
     ns.Style.Dropdown(voiceDD)
     ns.Style.Dropdown(styleDD)
     ns.Style.Dropdown(timePosDD)
+    ns.Style.Dropdown(fontDD)
   end
 
   -- after styling (which paints the thumb brand-blue): reflect the saved lock
