@@ -4,41 +4,36 @@
 -- login - every entry point is pcall-guarded, so total failure is a silent no-op.
 --
 -- One language at a time with an EN/한국어 toggle (default = client locale). Stacking
--- both at once was cluttered. The "re-export your plans" step is emphasized because
--- the fix does NOT apply to already-imported plans until they are re-exported.
+-- both at once was cluttered.
 local _, ns = ...
 local WhatsNew = {}
 ns.WhatsNew = WhatsNew
 
 -- Bump ONLY when there is news to show. Login compares it to CoolPlanDB.lastWhatsNew;
 -- equal → nothing shows. A routine addon bump with no WhatsNew change stays silent.
-WhatsNew.version = "1.8.0"
+WhatsNew.version = "1.9.0"
 
--- Per-language body. Color codes (|c…|r) render in FontStrings. The "Important" line
--- is gold so the re-export requirement stands out.
+-- Per-language body. Color codes (|c…|r) render in FontStrings.
 local BODY = {
   en = table.concat({
-    "Version update: you can now add your own text cues to a plan.",
+    "Season 2 update: the new dungeons and raid are now in the addon.",
     "",
-    "On the site, click an empty spot on a player's timeline and type any text",
-    "(e.g. |cffffcc00\"Shield NOW\"|r) — it shows on the HUD and is read aloud (TTS),",
-    "just like a spell.",
+    "All 8 Season 2 dungeons and the raid |cffffcc00The Venomous Abyss|r now show up",
+    "in the timeline navigation, so you can save and load plans for them.",
     "",
-    "New |cffffcc00Custom note|r category (its own color) — toggle it under",
-    "Options > Show categories.",
+    "A few boss names were also corrected to match the live logs.",
     "",
     "Not working, or you see an error? Tell us on Discord and we will fix it.",
     "",
     "|cff66b3ffcoolplan.team|r",
   }, "\n"),
   ko = table.concat({
-    "버전 업데이트: 이제 플랜에 원하는 문구(커스텀 알림)를 직접 넣을 수 있습니다.",
+    "시즌 2 업데이트: 새 던전과 레이드가 애드온에 들어왔습니다.",
     "",
-    "사이트에서 플레이어 타임라인의 빈 곳을 클릭해 아무 문구나 입력하면",
-    "(예: |cffffcc00\"지금 생존기\"|r) 스킬처럼 HUD에 표시되고 음성(TTS)으로도 읽어줍니다.",
+    "시즌 2 던전 8종과 레이드 |cffffcc00맹독 심연|r이 타임라인 네비게이션에",
+    "표시되어, 이제 해당 보스별로 플랜을 저장하고 불러올 수 있습니다.",
     "",
-    "전용 |cffffcc00커스텀 노트|r 카테고리(별도 색)가 추가됐습니다 —",
-    "옵션 > 카테고리 표시에서 켜고 끌 수 있습니다.",
+    "일부 보스 이름도 실제 로그에 맞게 교정했습니다.",
     "",
     "제대로 동작하지 않거나 오류가 발생하면 디스코드로 알려 주세요. 신속히 수정하겠습니다.",
     "",

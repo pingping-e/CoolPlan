@@ -3,100 +3,91 @@
 -- Stored on the addon namespace `ns` (not _G) to avoid global taint surface.
 local _, ns = ...
 ns.EncounterNames = {
-  [3159] = "Rotmire",
-  [3176] = "Imperator Averzian",
-  [3177] = "Vorasius",
-  [3178] = "Vaelgor & Ezzorak",
-  [3179] = "Fallen-King Salhadaar",
-  [3180] = "Lightblinded Vanguard",
-  [3181] = "Crown of the Cosmos",
-  [3182] = "Belo'ren, Child of Al'ar",
-  [3183] = "Midnight Falls",
-  [3306] = "Chimaerus, the Undreamt God",
-  [10658] = "Scourgelord Tyrannus",
-  [12805] = "Restless Heart",
-  [12811] = "Degentrius",
-  [12874] = "Rak'tul, Vessel of Souls",
-  [12915] = "Lothraxion",
-  [61209] = "High Sage Viryx",
-  [112526] = "Echo of Doragosa",
-  [361753] = "L'ura",
+  [3379] = "Nymrissa Wavecaller",
+  [3420] = "Sszorak",
+  [3421] = "The Twin Fangs",
+  [3429] = "The Coiled Altar",
+  [3445] = "Entombed Sentinels",
+  [3455] = "Vashnik the Malignant",
+  [3470] = "Nek'zali the Soulcoiler",
+  [3492] = "Ula'tek",
+  [3497] = "The Lost Explorers",
+  [12813] = "Lithiel Cinderfury",
+  [12825] = "Nalorakk",
+  [12859] = "Ziekett",
+  [12923] = "Charonus",
+  [12993] = "Zul'jan",
+  [61762] = "King Dazar",
+  [61877] = "Avatar of Sethraliss",
+  [112521] = "Kyrakka and Erkhart Stormvein",
 }
 
 -- Content groups for the addon navigation (category → group → boss).
 -- Mythic+ : one group per dungeon, bosses = all its bosses (id only when resolved).
--- Raid    : one group per raid instance, bosses = resolved bosses only.
+-- Raid    : one group per raid instance, bosses = all its bosses (id only when resolved).
 ns.Content = {
   {
     key = "mythicplus", label = "Mythic+",
     groups = {
-      { name="Algeth'ar Academy", kr="알게타르 대학", bosses = {
-        { name="Vexamus", kr="벡사무스" },
-        { name="Overgrown Ancient", kr="비대해진 고대정령" },
-        { name="Crawth", kr="크로스" },
-        { id=112526, name="Echo of Doragosa", kr="도라고사의 메아리" },
+      { name="Altar of Fangs", kr="송곳니의 제단", bosses = {
+        { name="Rav'i", kr="라비" },
+        { name="The Writhing Coil", kr="격동하는 똬리" },
+        { id=12993, name="Zul'jan", kr="줄잔" },
       } },
-      { name="Magisters' Terrace", kr="마법학자의 정원", bosses = {
-        { name="Arcanotron Custos", kr="비전골렘 쿠스토스" },
-        { name="Seranel Sunlash", kr="사라넬 선래쉬" },
-        { name="Gemellus", kr="제멜루스" },
-        { id=12811, name="Degentrius", kr="디젠트리우스" },
+      { name="Murder Row", kr="죽음의 골목", bosses = {
+        { name="Kystia Manaheart", kr="키스티아 마나하트" },
+        { name="Zaen Bladesorrow", kr="자엔 블레이드소로우" },
+        { name="Xathuux the Annihilator", kr="파멸자 자투스" },
+        { id=12813, name="Lithiel Cinderfury", kr="리시엘 신더퓨리" },
       } },
-      { name="Maisara Caverns", kr="마이사라 동굴", bosses = {
-        { name="Muro'jin and Nekraxx", kr="무로진과 네크락스" },
-        { name="Vordaza", kr="보르다자" },
-        { id=12874, name="Rak'tul, Vessel of Souls", kr="영혼의 그릇 락툴" },
+      { name="Den of Nalorakk", kr="날로라크의 소굴", bosses = {
+        { name="The Hoardmonger", kr="비축광" },
+        { name="Sentinel of Winter", kr="겨울의 파수꾼" },
+        { id=12825, name="Nalorakk", kr="날로라크" },
       } },
-      { name="Nexus-Point Xenas", kr="공결탑 제나스", bosses = {
-        { name="Chief Corewright Kasreth", kr="수석 핵장인 카스레스" },
-        { name="Corewarden Nysarra", kr="핵감시관 니사라" },
-        { id=12915, name="Lothraxion", kr="로스락시온" },
+      { name="The Blinding Vale", kr="눈부신 골짜기", bosses = {
+        { name="Lightblossom Trinity", kr="빛송이 삼위일체" },
+        { name="Ikuzz the Light Hunter", kr="빛 사냥꾼 이쿠즈" },
+        { name="Lightwarden Ruia", kr="빛의 감시자 루이아" },
+        { id=12859, name="Ziekett", kr="지케트" },
       } },
-      { name="Pit of Saron", kr="샤론의 구덩이", bosses = {
-        { name="Forgemaster Garfrost", kr="제련장인 가프로스트" },
-        { name="Ick and Krick", kr="이크와 크리크" },
-        { id=10658, name="Scourgelord Tyrannus", kr="스컬지군주 티라누스" },
+      { name="Voidscar Arena", kr="공허흉터 투기장", bosses = {
+        { name="Taz'Rah", kr="타즈라" },
+        { name="Atroxus", kr="아트로서스" },
+        { id=12923, name="Charonus", kr="차로누스" },
       } },
-      { name="Seat of the Triumvirate", kr="삼두정의 권좌", bosses = {
-        { name="Zuraal the Ascended", kr="승천자 주라알" },
-        { name="Saprish", kr="사프리쉬" },
-        { name="Viceroy Nezhar", kr="총독 네자르" },
-        { id=361753, name="L'ura", kr="르우라" },
+      { name="Temple of Sethraliss", kr="세스랄리스 사원", bosses = {
+        { name="Adderis and Aspix", kr="애더리스와 아스픽스" },
+        { name="Merektha", kr="메레크타" },
+        { name="Galvazzt", kr="갈바즈트" },
+        { id=61877, name="Avatar of Sethraliss", kr="세스랄리스의 화신" },
       } },
-      { name="Skyreach", kr="하늘탑", bosses = {
-        { name="Ranjit", kr="란지트" },
-        { name="Araknath", kr="아라크나스" },
-        { name="Rukhran", kr="루크란" },
-        { id=61209, name="High Sage Viryx", kr="대현자 비릭스" },
+      { name="King's Rest", kr="왕들의 안식처", bosses = {
+        { name="The Golden Serpent", kr="황금 날뱀" },
+        { name="Mchimba the Embalmer", kr="장의사 음침바" },
+        { name="The Council of Tribes", kr="부족 의회" },
+        { id=61762, name="King Dazar", kr="초대 왕 다자르" },
       } },
-      { name="Windrunner Spire", kr="윈드러너 첨탑", bosses = {
-        { name="Emberdawn", kr="잿불여명" },
-        { name="Derelict Duo", kr="버려진 2인조" },
-        { name="Commander Kroluk", kr="지휘관 크롤루크" },
-        { id=12805, name="Restless Heart", kr="잠 못 드는 심장" },
+      { name="Ruby Life Pools", kr="루비 생명의 웅덩이", bosses = {
+        { name="Melidrussa Chillworn", kr="멜리드루사 칠원" },
+        { name="Kokia Blazehoof", kr="코키아 블레이즈후프" },
+        { id=112521, name="Kyrakka and Erkhart Stormvein", kr="카이락카와 에크하트 스톰베인" },
       } },
     },
   },
   {
     key = "raid", label = "Raid",
     groups = {
-      { name="The Voidspire", kr="공허첨탑", bosses = {
-        { id=3176, name="Imperator Averzian", kr="통치자 아베르지안" },
-        { id=3177, name="Vorasius", kr="보라시우스" },
-        { id=3179, name="Fallen-King Salhadaar", kr="몰락한 왕 살라다르" },
-        { id=3178, name="Vaelgor & Ezzorak", kr="바엘고어와 에조라크" },
-        { id=3180, name="Lightblinded Vanguard", kr="빛에 눈이 먼 선봉대" },
-        { id=3181, name="Crown of the Cosmos", kr="우주의 왕관" },
-      } },
-      { name="The Dreamrift", kr="꿈의 균열", bosses = {
-        { id=3306, name="Chimaerus, the Undreamt God", kr="꿈결을 벗어난 신 카이메루스" },
-      } },
-      { name="March on Quel'Danas", kr="쿠엘다나스 진격로", bosses = {
-        { id=3182, name="Belo'ren, Child of Al'ar", kr="알라르의 자손 벨로렌" },
-        { id=3183, name="Midnight Falls", kr="한밤의 도래" },
-      } },
-      { name="Sporefall", kr="진균나락", bosses = {
-        { id=3159, name="Rotmire", kr="부식수렁" },
+      { name="The Venomous Abyss", kr="맹독 심연", bosses = {
+        { id=3470, name="Nek'zali the Soulcoiler", kr="영혼살무사 네크잘리" },
+        { id=3445, name="Entombed Sentinels", kr="매장된 파수꾼" },
+        { id=3455, name="Vashnik the Malignant", kr="악성의 바쉬니크" },
+        { id=3497, name="The Lost Explorers", kr="길 잃은 탐험가" },
+        { id=3420, name="Sszorak", kr="스조라크" },
+        { id=3421, name="The Twin Fangs", kr="쌍둥이 송곳니" },
+        { id=3429, name="The Coiled Altar", kr="똬리의 제단" },
+        { id=3492, name="Ula'tek", kr="울라텍" },
+        { id=3379, name="Nymrissa Wavecaller", kr="님리사 웨이브콜러" },
       } },
     },
   },

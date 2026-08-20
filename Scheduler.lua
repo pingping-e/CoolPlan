@@ -51,34 +51,15 @@ local TL_DEBOUNCE = 8       -- s: ignore further signals within this window. Its
 -- NSRT-style dur signatures (from /coolplan capture): a boss's MAIN rotation event
 -- durations. A main-dur event CANCELED (state=3) = sub-phase ENTRY; the main-dur set
 -- re-ADDED = sub-phase EXIT (= next main phase). More robust than survival+occurrence
--- (no occ-skew). Gemellus uses unitCount → not listed here. Crawth (2564) & Lothraxion
--- (3333) reuse their rotation dur during the sub-phase, so their ENTRY comes from
--- PHASE_ENTRY_WARN instead (the dur sig here still drives their exit); L'ura (2068) is
--- likewise EXIT-ONLY here (entry = PHASE_ENTRY_ANYCANCEL, its cancel dur is laser-variable).
--- ✓ ALL FOUR VERIFIED in-game (2026-06-11/12): 3058 Kroluk &
--- 3213 Vordaza use a signature dur going state=3 for ENTRY (Vordaza's dur=70 cancels at
--- the Deathshroud entry); 2564 Crawth & 3333 Lothraxion are warning-gated (PHASE_ENTRY_
--- WARN) so their signature is EXIT-ONLY (the rotation set re-ADDED ends the sub-phase).
-local PHASE_DUR_SIGNATURES = {
-  [2564] = { 20, 5, 14 },                      -- Crawth (Gust/Peck/Screech)
-  [3213] = { 25.333, 3, 70, 14.166, 33.5 },    -- Vordaza
-  [3058] = { 1001, 999, 1004 },                -- Kroluk: long "main rotation" bars.
-  -- VERIFIED 2026-06-11 (in-game capture, fight 3058): the main-phase bars are
-  -- always freshly ADDED at exactly {1001, 999, 1004}; they go state=3 at each
-  -- sub-phase ENTRY and re-ADD at the EXIT. The 952-998 values seen in the capture
-  -- are transient "remaining-time" snapshots at the boundary - deliberately NOT
-  -- listed (an exact match avoids false EXIT fires right after an entry).
-  [3333] = { 2, 11, 52, 24 },                  -- Lothraxion
-  [2068] = { 24, 12, 35 },                     -- L'ura: main rotation SET (Discordant Beam 24 /
-  -- Disintegrate 12 / Grim Chorus 35). EXIT-ONLY (entry is PHASE_ENTRY_ANYCANCEL, below).
-  -- VERIFIED 2026-06-12 (capture fight 2068): the main set {1.5,24,12,35} re-ADDs together at
-  -- each sub-phase exit. 1.5 is DELIBERATELY EXCLUDED - it collides with the Symphony cast bar
-  -- (dur 1.5) that ADDs AT the entry, which (alternation just set "entry") would fire a false
-  -- EXIT one tick after the entry. 24/12/35 appear ONLY at the main-set re-ADD - never during
-  -- the intermission (which shows just 1.5/20) nor in the b-set (5/17/28) - so the first of them
-  -- after an entry = the rotation resumed = exit. Multi-value (like Kroluk/Crawth) is more
-  -- robust than a single dur if one value drifts run-to-run (sub-phases 2+ not yet captured).
-}
+-- (no occ-skew). Entry can also be warning-gated (PHASE_ENTRY_WARN) or any-cancel
+-- (PHASE_ENTRY_ANYCANCEL) when a boss reuses its rotation dur during the sub-phase; a
+-- unit-count boss uses the count path instead. Pick the mechanism per boss at capture.
+-- encounterID -> the ADDED-event durations that mark each sub-phase boundary
+-- (multi-value is more robust than a single dur if one value drifts run-to-run).
+-- EMPTY for Midnight S2: sub-phase bosses are captured in-game (/coolplan capture)
+-- and added here per boss. The former S1 signatures (Crawth 2564, Vordaza 3213,
+-- Kroluk 3058, Lothraxion 3333, L'ura 2068) and their verification notes are in git.
+local PHASE_DUR_SIGNATURES = {}
 local DUR_EPSILON = 0.3     -- s: float dur match tolerance (25.333, 14.166 …)
 -- Warning-gated ENTRY. Some bosses don't surface a clean sub-phase CANCEL on a signature
 -- duration, but DO herald the sub-phase with an ENCOUNTER_WARNING. `sev` = minimum
@@ -93,10 +74,9 @@ local DUR_EPSILON = 0.3     -- s: float dur match tolerance (25.333, 14.166 …)
 --     2026-06-12 (two captures): dur=3.5 sev=2 precedes each sub-phase (player: ~52-53s
 --     cycle, the actual mechanic begins ~9.5s later = cast 7.5s + ~2s); routine dur=3
 --     sev=2 warnings are correctly excluded; exit = rotation set {2,11,52,24} re-ADDED.
-local PHASE_ENTRY_WARN = {
-  [2564] = { sev = 2 },              -- Crawth: severity alone (routine = sev 1)
-  [3333] = { sev = 2, dur = 3.5 },   -- Lothraxion: routine warnings are also sev 2 (dur 3)
-}
+-- Warning-gated ENTRY (encounterID -> { sev, dur? }). EMPTY for Midnight S2 until
+-- captured in-game. Former S1 entries (Crawth 2564, Lothraxion 3333) in git.
+local PHASE_ENTRY_WARN = {}
 -- ANY-CANCEL ENTRY. A few bosses signal the sub-phase by interrupting their rotation
 -- but the CANCELED event's duration isn't fixed (so it can't be dur-gated like
 -- Kroluk/Vordaza). For these, ANY state=3 (cancel) during combat = sub-phase entry; the
@@ -109,9 +89,9 @@ local PHASE_ENTRY_WARN = {
 --     (two captures): during combat the ONLY state=3 was the intermission entry (~64s);
 --     all other transitions were state=2. Combat-end cancels arrive with pullTime nil
 --     (guarded below).
-local PHASE_ENTRY_ANYCANCEL = {
-  [2068] = true,                    -- L'ura: Symphony interrupt cancels a laser-variable rotation event
-}
+-- ANY-CANCEL ENTRY (encounterID -> true). EMPTY for Midnight S2 until captured
+-- in-game. Former S1 entry (L'ura 2068) in git.
+local PHASE_ENTRY_ANYCANCEL = {}
 -- ── Raid phase detection (our dur-signature method, applied to RAID bosses) ────
 -- Same idea as the dungeon engine above: the official Encounter Timeline never
 -- exposes a usable info.phase (secret in Midnight instances - the same lockdown
@@ -132,32 +112,11 @@ local RAID_PHASE_DEBOUNCE = 5   -- s: min gap between raid advances (collapse th
 -- duration N - used when every transition shares one bar length). `mode="ge"`
 -- matches dur >= value; default matches |dur - value| < RAID_DUR_EPSILON. `delay`
 -- (s) fires the advance that many seconds AFTER the matching event.
-local RAID_PHASE_DURS = {
-  [3182] = {                       -- Belo'ren, Child of Al'ar
-    mode = "eq",                   -- exact short bar at each Death Drop
-    isolate = true,                -- only advance on an ISOLATED dur-6 (≤1 ADDED within
-                                   -- ISOLATE_WINDOW); a dur-6 inside a same-instant burst
-                                   -- isn't the Death Drop transition.
-    [14] = { all = 6 },
-    [15] = { all = 6 },
-    [16] = { all = 6 },
-  },
-  [3183] = {                       -- Midnight Falls (L'ura)
-    -- P4→P5 isn't duration-gated: it resolves on a fresh encounter-engage once the
-    -- 2nd boss unit is gone, >guard s into P4 (see ENGAGE handling in onTimelineEvent).
-    -- Mythic-only (`diff`): the 2-boss P4→P5 split exists only on Mythic.
-    engage = { from = 4, to = 5, guard = 20, noUnit = "boss2", diff = 16 },
-    [15] = { 45, 97, 180 },        -- P1→2, P2→3, P3→4 (Heroic)
-    [16] = { 45, 97, 180 },        -- (Mythic)
-  },
-  [3181] = {                       -- Crown of the Cosmos — Normal/Heroic (dur sequence).
-    mode = "eq",                   -- exact bar lengths (1.5 is GCD-sized - needs exact)
-    [14] = { 1.5, 24, 1.5, 60 },   -- P1→2, P2→3, P3→4, P4→5
-    [15] = { 1.5, 24, 1.5, 60 },
-    -- Mythic (16) uses event COUNTING instead (see RAID_COUNT).
-  },
-  -- Salhadaar (3179): not a phase boss for our purposes (see RAID_PHASE_ANCHORING handoff).
-}
+-- EMPTY for Midnight S2 until raid phase bosses are captured in-game. Fill per boss:
+--   [encounterID] = { mode?, delay?, isolate?, engage?, [difficultyID] = <advance durs> }
+-- where advance durs is an ARRAY indexed by current phase ({45,97,180}) or { all = N }.
+-- Former S1 entries (Belo'ren 3182, L'ura 3183, Crown of the Cosmos 3181) are in git.
+local RAID_PHASE_DURS = {}
 -- Event-count phase detection (when a single transition duration isn't reliable, the
 -- phase advances once enough timeline events accumulate in a short window). Same family
 -- as the dungeon unit-count / state-cancel detectors, applied to timeline-event counts.
@@ -167,15 +126,9 @@ local RAID_PHASE_DURS = {
 --   skip         = a phase that jumps forward (Crown P3→P5): reached on `count` events
 --                  OR an ADDED event of `altDur`.
 local RAID_COUNT_WINDOW = 0.3
-local RAID_COUNT = {
-  [3181] = {                       -- Crown of the Cosmos — Mythic only
-    [16] = {
-      required = { 2, 4, false, 4 },
-      phase1Durs = { [1.5] = true, [25] = true, [6] = true },
-      skip = { from = 3, to = 5, count = 8, altDur = 60 },
-    },
-  },
-}
+-- EMPTY for Midnight S2 until an event-counting raid boss is captured in-game.
+-- Former S1 entry (Crown of the Cosmos 3181, Mythic) is in git.
+local RAID_COUNT = {}
 local ISOLATE_WINDOW = 0.1        -- s: window for the Belo'ren isolation guard
 -- preview mode: a virtual clock advanced by `speed`x each real tick, with an
 -- optional onTick(elapsed, total) callback (used by the Timeline playhead).
