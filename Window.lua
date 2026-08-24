@@ -290,7 +290,7 @@ local function build()
   foot:SetText("v" .. verStr)
 
   -- a label + bordered read-only EditBox so the URL can be selected (drag) and
-  -- copied (Ctrl+C), with a subtle border like NSRT's footer links.
+  -- copied (Ctrl+C), with a subtle border so it reads as a link, not an input.
   local function labeledLink(anchor, label, url, boxW)
     local lbl = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     lbl:SetPoint("LEFT", anchor, "RIGHT", 16, 0)

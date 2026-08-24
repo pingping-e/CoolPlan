@@ -176,7 +176,7 @@ local function computePhaseStart(reminders, boss, phases)
 end
 
 -- Short axis tag for a phase boundary: "Phase 2 (…)" → P2, "Intermission 1 (…)"
--- → I1. P (main phase) + I (intermission) matches MRT/NSRT/Encounter-Journal;
+-- → I1. P (main phase) + I (intermission) is the notation raid guides use;
 -- anything else falls back to the raw phase index (p3).
 local function shortPhaseLabel(index, label)
   if type(label) == "string" then

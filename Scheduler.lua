@@ -38,6 +38,11 @@ local tlAddedAt, tlLastAdvance, durById, tlLastSignal, tlCursor
 --   raidAddedAt = elapsed of each ADDED timeline event this pull (for the isolation
 --                 guard and the event-count detector below)
 local raidCur, raidSwapAt, raidAddedAt
+-- Parallel to raidAddedAt: the ADDED duration of each counted event, for `burstDurs`.
+local raidAddedDur
+-- Boss unit-cast phase state (RAID_CAST_PHASES): per-unit UNIT_SPELLCAST_START
+-- times this pull, and whether boss1 has completed the marker cast yet.
+local castStarts, castMarkerSeen
 -- HP / boss-count diagnostic state. logBossHealth is defined AFTER recordCapture
 -- (it calls it), so forward-declare here for tick() and run() to reference.
 local logBossHealth, lastHpLog, lastBossCount, recordCapture
@@ -48,7 +53,7 @@ local TL_DEBOUNCE = 8       -- s: ignore further signals within this window. Its
                             -- BELOW the shortest real sub-phase (Crawth fight 2564 sub-
                             -- phase 1 was ~14s entry→exit; 15s would have eaten its
                             -- exit and mis-anchored to the next rotation cycle).
--- NSRT-style dur signatures (from /coolplan capture): a boss's MAIN rotation event
+-- Duration signatures (curated in game with /coolplan capture): a boss's MAIN rotation event
 -- durations. A main-dur event CANCELED (state=3) = sub-phase ENTRY; the main-dur set
 -- re-ADDED = sub-phase EXIT (= next main phase). More robust than survival+occurrence
 -- (no occ-skew). Entry can also be warning-gated (PHASE_ENTRY_WARN) or any-cancel
@@ -116,19 +121,113 @@ local RAID_PHASE_DEBOUNCE = 5   -- s: min gap between raid advances (collapse th
 --   [encounterID] = { mode?, delay?, isolate?, engage?, [difficultyID] = <advance durs> }
 -- where advance durs is an ARRAY indexed by current phase ({45,97,180}) or { all = N }.
 -- Former S1 entries (Belo'ren 3182, L'ura 3183, Crown of the Cosmos 3181) are in git.
-local RAID_PHASE_DURS = {}
+-- Midnight S2. 3429 The Coiled Altar: a ~70s timeline bar telegraphs the end of
+-- phase 1 on every difficulty. Phases 2 and 3 are left by other signals — see
+-- RAID_CAST_PHASES / RAID_COUNT below (one boss, three different boundary shapes).
+local RAID_PHASE_DURS = {
+  [3429] = {
+    [14] = { [1] = 70 },
+    [15] = { [1] = 70 },
+    [16] = { [1] = 70 },
+  },
+}
 -- Event-count phase detection (when a single transition duration isn't reliable, the
 -- phase advances once enough timeline events accumulate in a short window). Same family
 -- as the dungeon unit-count / state-cancel detectors, applied to timeline-event counts.
 --   required[p]  = ADDED events (within `window` s) needed to leave phase p; false = no
 --                  count rule for that phase (handled by `skip`).
 --   phase1Durs   = while in phase 1, only count ADDED events of these durations.
+--   burstDurs    = the burst only counts when one of its events carries one of these
+--                  durations — separates a real boundary burst from an ordinary
+--                  rotation refresh that happens to land together.
+--   debounce     = seconds that must pass before an advance; a number, or a per-phase
+--                  table. Defaults to RAID_PHASE_DEBOUNCE. Use a long value on a boss
+--                  whose phases are minutes apart, so a mid-phase burst can't advance.
 --   skip         = a phase that jumps forward (Crown P3→P5): reached on `count` events
 --                  OR an ADDED event of `altDur`.
 local RAID_COUNT_WINDOW = 0.3
--- EMPTY for Midnight S2 until an event-counting raid boss is captured in-game.
--- Former S1 entry (Crown of the Cosmos 3181, Mythic) is in git.
-local RAID_COUNT = {}
+-- Midnight S2 (The Venomous Abyss). Curated from live-log phase boundaries plus a
+-- cross-check against how other raid tools time the same boundary; the RULE and the
+-- format are ours (the counting engine below is unchanged since S1).
+--   3445 Entombed Sentinels: a repeating boss. Each cycle ends in an immune
+--   intermission (Vitriolic Stasis) and the NEXT phase starts when the boss's whole
+--   rotation is re-added to the encounter timeline at once - a burst of 8+ ADDED
+--   events inside RAID_COUNT_WINDOW. Same threshold on all three difficulties
+--   (the rotation set is the same size); `required` is per CURRENT phase, listed
+--   long enough to cover the longest kill (a phase past the list simply stops
+--   advancing, which is the safe direction). No phase1Durs: at this boundary the
+--   pull burst is what we count, and the 5s post-pull debounce covers the pull.
+local RAID_COUNT = {
+  -- 3497 The Lost Explorers: each phase change re-adds the whole rotation at once.
+  -- An ordinary refresh can also land together, so the burst must carry one of the
+  -- transition bar lengths, and the long debounce keeps a mid-phase pile-up from
+  -- advancing (phase 1 is short; the later phases run ~2 minutes).
+  [3497] = {
+    [14] = { required = { 4, 4, 4 }, burstDurs = { [16] = true, [11] = true, [13] = true }, debounce = { 40, 100, 100 } },
+    [15] = { required = { 4, 4, 4 }, burstDurs = { [16] = true, [11] = true, [13] = true }, debounce = { 40, 100, 100 } },
+    [16] = { required = { 4, 4, 4 }, burstDurs = { [16] = true, [11] = true, [13] = true }, debounce = { 40, 100, 100 } },
+  },
+  -- 3429 The Coiled Altar: only phase 3 (the transition) ends on a burst — the
+  -- rotation is re-added at once when the last phase opens. Phases 1 and 2 have
+  -- no `required` entry, so the count path never advances them.
+  [3429] = {
+    [14] = { required = { [3] = 4 } },
+    [15] = { required = { [3] = 4 } },
+    [16] = { required = { [3] = 4 } },
+  },
+  [3445] = {
+    [14] = { required = { 8, 8, 8, 8, 8, 8, 8, 8 } },
+    [15] = { required = { 8, 8, 8, 8, 8, 8, 8, 8 } },
+    [16] = { required = { 8, 8, 8, 8, 8, 8, 8, 8 } },
+  },
+}
+
+-- BigWigs stage -> our plan phase index, per boss. FALLBACK ONLY: the heuristics
+-- above are primary because they need no other addon; this only catches a boundary
+-- they missed, for the users who do run BigWigs. `identity` = BigWigs bumps its
+-- stage at the same moment our phase starts (3445: at the intermission END), so its
+-- integer stage IS our phase index. A boss absent here ignores BigWigs entirely.
+local RAID_BW_STAGE = {
+  [3445] = { identity = true },
+}
+
+-- Boss UNIT_SPELLCAST phase detection. Some raid bosses give no usable timeline
+-- signature at the boundary, but their own cast/channel events do mark it — and
+-- unlike spellIDs (secret in Midnight instances) the EVENTS themselves are
+-- readable, so we match on the SHAPE of the cast instead of its id.
+--   markerCastDur = a cast the boss must COMPLETE (START -> SUCCEEDED, +-
+--                   RAID_DUR_EPSILON) before any `requireMarkerCast` rule counts.
+--   rules[p]      = how to LEAVE phase p:
+--                     unit                 which boss unit fires it
+--                     event                "start" | "channel"
+--                     requireMarkerCast    only after the marker cast completed
+--                     minElapsed           seconds that must have passed in phase p
+--                     requireEmptyTimeline the encounter timeline must be empty
+--                                          (the boss's rotation is gone mid-transition)
+--
+-- 3470 Nek'zali: P1 -> intermission on the boss's channel, but only once it has
+-- completed its ~1.5s marker cast (verified in logs: 1295124 begincast->cast =
+-- 1.6s, immediately before the intermission). The intermission ends when boss2
+-- starts casting at least 25s in with an empty timeline, and the last phase opens
+-- on another channel. Matches the phase times this boss's plan is anchored to
+-- (lib/catalog/raid-phases.ts).
+local RAID_CAST_PHASES = {
+  -- 3429 The Coiled Altar: phase 2 ends when boss2 channels with the encounter
+  -- timeline EMPTY (the rotation is gone for the transition). No marker cast.
+  [3429] = {
+    rules = {
+      [2] = { unit = "boss2", event = "channel", requireEmptyTimeline = true },
+    },
+  },
+  [3470] = {
+    markerCastDur = 1.5,
+    rules = {
+      [1] = { unit = "boss1", event = "channel", requireMarkerCast = true },
+      [2] = { unit = "boss2", event = "start", minElapsed = 25, requireEmptyTimeline = true },
+      [3] = { unit = "boss1", event = "channel" },
+    },
+  },
+}
 local ISOLATE_WINDOW = 0.1        -- s: window for the Belo'ren isolation guard
 -- preview mode: a virtual clock advanced by `speed`x each real tick, with an
 -- optional onTick(elapsed, total) callback (used by the Timeline playhead).
@@ -291,29 +390,44 @@ local function raidCountAdvance(dur, now)
   local cfg = activeId and RAID_COUNT[activeId]
   cfg = cfg and cfg[instanceDifficulty()]
   if not cfg or not raidCur then return end
-  if (now - (raidSwapAt or -999)) < RAID_PHASE_DEBOUNCE then return end
-  -- In phase 1 only the listed transition-bar durations count; from phase 2 on,
-  -- every encounter ADDED event counts.
+  local deb = cfg.debounce
+  if type(deb) == "table" then deb = deb[raidCur] end
+  if (now - (raidSwapAt or -999)) < (deb or RAID_PHASE_DEBOUNCE) then return end
+  -- In phase 1 only the listed transition-bar durations count WHEN the boss defines
+  -- `phase1Durs` (its phase-1 boundary is otherwise indistinguishable from noise);
+  -- without that table every ADDED event counts in phase 1 too, same as phase 2+.
   local countThis = true
-  if raidCur == 1 then
+  if raidCur == 1 and cfg.phase1Durs then
     countThis = type(dur) == "number" and not (issecretvalue and issecretvalue(dur))
-      and cfg.phase1Durs and cfg.phase1Durs[dur] == true
+      and cfg.phase1Durs[dur] == true
   end
+  local numDur = type(dur) == "number" and not (issecretvalue and issecretvalue(dur)) and dur or nil
   if countThis then
     raidAddedAt = raidAddedAt or {}
     raidAddedAt[#raidAddedAt + 1] = now
-  end
-  local n = 0
-  if raidAddedAt then
-    for i = #raidAddedAt, 1, -1 do
-      if now - raidAddedAt[i] <= RAID_COUNT_WINDOW then n = n + 1 else break end
+    if cfg.burstDurs then
+      raidAddedDur = raidAddedDur or {}
+      raidAddedDur[#raidAddedAt] = numDur
     end
   end
+  local n, sawBurstDur = 0, not cfg.burstDurs
+  if raidAddedAt then
+    for i = #raidAddedAt, 1, -1 do
+      if now - raidAddedAt[i] <= RAID_COUNT_WINDOW then
+        n = n + 1
+        local d = raidAddedDur and raidAddedDur[i]
+        if cfg.burstDurs and d and cfg.burstDurs[d] then sawBurstDur = true end
+      else
+        break
+      end
+    end
+  end
+  if not sawBurstDur then return end
   local req = cfg.required and cfg.required[raidCur]
   if raidCur ~= (cfg.skip and cfg.skip.from) and req and n >= req then
     raidCur = raidCur + 1
     raidSwapAt = now
-    raidAddedAt = {}
+    raidAddedAt, raidAddedDur = {}, {}
     if ns.debug then recordCapture("raid:COUNT", "phase:" .. raidCur .. " n:" .. n, "") end
     firePhase(raidCur)
     return
@@ -323,11 +437,110 @@ local function raidCountAdvance(dur, now)
      and (n >= skip.count or (type(dur) == "number" and not (issecretvalue and issecretvalue(dur)) and dur == skip.altDur)) then
     raidCur = skip.to
     raidSwapAt = now
-    raidAddedAt = {}
+    raidAddedAt, raidAddedDur = {}, {}
     if ns.debug then recordCapture("raid:COUNT", "skip→" .. raidCur .. " n:" .. n, "") end
     firePhase(raidCur)
     return
   end
+end
+
+-- How many encounter-timeline events are currently ACTIVE. A boss mid-transition
+-- has none (its whole rotation is cleared), which is what `requireEmptyTimeline`
+-- keys on. Returns 0 when the client doesn't expose the API.
+local function activeTimelineCount()
+  local T = C_EncounterTimeline
+  if not (T and T.GetEventList and T.GetEventState) then return 0 end
+  local list = T.GetEventList()
+  if type(list) ~= "table" then return 0 end
+  local active = Enum and Enum.EncounterTimelineEventState and Enum.EncounterTimelineEventState.Active
+  local n = 0
+  for _, id in ipairs(list) do
+    local st = T.GetEventState(id)
+    if active == nil or st == active then n = n + 1 end
+  end
+  return n
+end
+
+-- Boss unit-cast phase advance (see RAID_CAST_PHASES). No-op for any encounter
+-- without a rule table, so every other boss and the dungeon path are untouched.
+local function raidCastAdvance(e, unit, now)
+  local cfg = activeId and RAID_CAST_PHASES[activeId]
+  if not cfg or not raidCur or not unit then return end
+
+  -- Marker-cast tracking: remember each START, and on SUCCEEDED check whether any
+  -- of them was markerCastDur ago (that's the boss completing the marker cast).
+  if e == "UNIT_SPELLCAST_START" then
+    castStarts = castStarts or {}
+    local list = castStarts[unit]
+    if not list then list = {}; castStarts[unit] = list end
+    list[#list + 1] = now
+  elseif e == "UNIT_SPELLCAST_SUCCEEDED" then
+    local list = cfg.markerCastDur and castStarts and castStarts[unit]
+    if list then
+      for i = #list, 1, -1 do
+        if math.abs((now - list[i]) - cfg.markerCastDur) < RAID_DUR_EPSILON then
+          castMarkerSeen = true
+          break
+        end
+      end
+    end
+    return
+  end
+
+  local rule = cfg.rules and cfg.rules[raidCur]
+  if not rule or rule.unit ~= unit then return end
+  local want = rule.event == "channel" and "UNIT_SPELLCAST_CHANNEL_START" or "UNIT_SPELLCAST_START"
+  if e ~= want then return end
+  if rule.requireMarkerCast and not castMarkerSeen then return end
+  local guard = math.max(RAID_PHASE_DEBOUNCE, rule.minElapsed or 0)
+  if (now - (raidSwapAt or -999)) < guard then return end
+  if rule.requireEmptyTimeline and activeTimelineCount() > 0 then return end
+
+  raidCur = raidCur + 1
+  raidSwapAt = now
+  castStarts = {}
+  if ns.debug then recordCapture("raid:CAST", "phase:" .. raidCur .. " " .. unit .. " " .. e, "") end
+  firePhase(raidCur)
+end
+
+-- BigWigs FALLBACK phase advance. Our own timeline heuristics (raidCountAdvance /
+-- raidAdvance) are primary - they work with no other addon installed, which many
+-- players are. This runs only when BigWigs is present AND the boss has a stage
+-- mapping, and only moves FORWARD, so a stage message can rescue a boundary the
+-- heuristic missed but can never rewind or double-fire one it already caught.
+-- Skipped phases are NOT fired: firePhase anchors cues to NOW, so replaying an
+-- older phase here would schedule it at a wrong time (the queue drops it instead).
+local function raidStageAdvance(stage)
+  if not raidCur or not activeId then return end
+  local map = RAID_BW_STAGE[activeId]
+  if not map then return end
+  if type(stage) ~= "number" or (issecretvalue and issecretvalue(stage)) then return end
+  local target = map.identity and math.floor(stage) or map[stage]
+  if type(target) ~= "number" or target <= raidCur then return end
+  local now = nowElapsed()
+  if (now - (raidSwapAt or -999)) < RAID_PHASE_DEBOUNCE then return end
+  raidCur = target
+  raidSwapAt = now
+  -- Both arrays: raidAddedDur is indexed in lockstep with raidAddedAt, so clearing
+  -- only one leaves the burst counter reading last cycle's durations.
+  raidAddedAt, raidAddedDur = {}, {}
+  if ns.debug then recordCapture("raid:BWSTAGE", "phase:" .. target .. " stage:" .. tostring(stage), "") end
+  firePhase(target)
+end
+
+-- Whether the unit-cast detector can carry THIS difficulty. A boss can mix
+-- signals (3429 leaves phase 1 on a duration and phase 3 on a burst): when those
+-- other detectors have no table for this difficulty, the cast rules alone cannot
+-- walk every boundary, so arming would park every later cue forever. Only arm when
+-- the boss needs nothing else (difficulty-independent cast rules, e.g. Nek'zali) or
+-- the other detectors do cover this difficulty - LFR and any uncurated difficulty
+-- stay unarmed and take the explicit suppress path instead.
+local function raidCastArmable(encId, diff)
+  local cfg = RAID_CAST_PHASES[encId]
+  if not cfg then return false end
+  local durCfg, countCfg = RAID_PHASE_DURS[encId], RAID_COUNT[encId]
+  if not durCfg and not countCfg then return true end
+  return (durCfg ~= nil and durCfg[diff] ~= nil) or (countCfg ~= nil and countCfg[diff] ~= nil)
 end
 
 -- Encounter-roster phase advance (Midnight Falls P4→P5): the boundary isn't a cast/
@@ -651,7 +864,8 @@ local function bossModSpell(spellID, label, fire)
 end
 
 -- ── Encounter Timeline (official C_EncounterTimeline API) ─────────────────────
--- Midnight's SANCTIONED encounter-event feed - the same one NSRT uses (NOT
+-- Midnight's SANCTIONED encounter-event feed - the feed the client exposes to
+-- addons inside instances (NOT
 -- BigWigs/DBM). Events ENCOUNTER_TIMELINE_EVENT_ADDED/REMOVED/STATE_CHANGED +
 -- ENCOUNTER_WARNING carry an `info` table (id, phase, duration, time, text, …).
 -- CONFIRMED to fire in M+ dungeons (user test 2026-06-10). For now this only
@@ -707,12 +921,21 @@ local function onTimelineEvent(e, a1)
     -- the isolation guard can see same-instant bursts.
     if raidCur then
       local rdur, rnow = info and info.duration, nowElapsed()
+      -- A boss can need BOTH paths (3429 leaves phase 1 on a duration and phase 3
+      -- on a burst), so run whichever it configures. raidCountAdvance records its
+      -- own timestamps (it filters by phase1Durs), so only the dur-only path adds
+      -- one here — otherwise the burst count would double-count every event.
       local countCfg = activeId and RAID_COUNT[activeId]
+      local counted = false
       if countCfg and countCfg[instanceDifficulty()] then
         raidCountAdvance(rdur, rnow)
-      else
-        raidAddedAt = raidAddedAt or {}
-        raidAddedAt[#raidAddedAt + 1] = rnow
+        counted = true
+      end
+      if activeId and RAID_PHASE_DURS[activeId] then
+        if not counted then
+          raidAddedAt = raidAddedAt or {}
+          raidAddedAt[#raidAddedAt + 1] = rnow
+        end
         raidAdvance(rdur, rnow)
       end
     end
@@ -788,6 +1011,8 @@ function Scheduler.InitBossMods()
     BW.RegisterMessage(proxy, "BigWigs_SetStage", function(_, _, stage)
       if phaseTriggers then recordCapture("BW:SetStage", "stage:" .. tostring(stage), "(stage)") end
       if ns.debug then ns.Print("|cffffcc44[bossmod BW:SetStage] " .. tostring(stage) .. "|r") end
+      -- Raid fallback: advance if our own detection missed this boundary.
+      ns.safecall(raidStageAdvance, stage)
     end)
     sources[#sources + 1] = "BigWigs"
   end
@@ -811,6 +1036,20 @@ function Scheduler.InitBossMods()
       pcall(tf.RegisterEvent, tf, ev) -- pcall: older clients may not have the event
     end
     tf:SetScript("OnEvent", function(_, e, a1) onTimelineEvent(e, a1) end)
+    -- Boss unit-cast phase boundaries (RAID_CAST_PHASES). RegisterUnitEvent keeps
+    -- this to boss1/boss2 only - a plain RegisterEvent would deliver every unit's
+    -- casts. The handler no-ops unless such a boss is armed.
+    local cf = CreateFrame("Frame")
+    for _, ev in ipairs({
+      "UNIT_SPELLCAST_START",
+      "UNIT_SPELLCAST_SUCCEEDED",
+      "UNIT_SPELLCAST_CHANNEL_START",
+    }) do
+      pcall(cf.RegisterUnitEvent, cf, ev, "boss1", "boss2")
+    end
+    cf:SetScript("OnEvent", function(_, e, unit)
+      if raidCur then ns.safecall(raidCastAdvance, e, unit, nowElapsed()) end
+    end)
     sources[#sources + 1] = "EncounterTimeline"
   end
   ns.bossModSources = sources
@@ -863,6 +1102,9 @@ local function run(cues, opts)
   raidCur = nil
   raidSwapAt = nil
   raidAddedAt = nil
+  raidAddedDur = nil
+  castStarts = nil
+  castMarkerSeen = false
   lastHpLog = nil
   lastBossCount = nil
   queue = {}
@@ -928,6 +1170,7 @@ local function run(cues, opts)
   local raidArmed = planHasPhases and not previewMode and (
     (raidCfg ~= nil and raidCfg[diff] ~= nil)            -- duration / engage boss
     or (raidCountCfg ~= nil and raidCountCfg[diff] ~= nil) -- event-count boss (Crown Mythic)
+    or raidCastArmable(activeId, diff)                     -- boss unit-cast boss (Nek'zali)
   )
   -- raidSwapAt = 0 (not nil) so the debounce also blocks an advance in the first
   -- RAID_PHASE_DEBOUNCE seconds after the pull (avoids a pull-burst false fire).

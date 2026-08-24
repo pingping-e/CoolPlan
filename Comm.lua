@@ -1,4 +1,4 @@
--- Party plan sharing (NSRT-style "Send" for 5-man M+).
+-- Party plan sharing: a one-click "Send" of the active plan to the 5-man group.
 --
 -- The active plan + shared boss timeline is serialized with Format.Serialize,
 -- then split into small chunks and broadcast over the PARTY addon channel. A
