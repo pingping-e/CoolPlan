@@ -9,6 +9,12 @@ local _, ns = ...
 local WhatsNew = {}
 ns.WhatsNew = WhatsNew
 
+-- RETIRED (1.10.1): the popup no longer shows on login. Release notes live on
+-- CurseForge and the site, so a login-time interruption isn't wanted. The frame and
+-- its copy are kept intact so a future release can turn it back on by flipping
+-- `enabled` to true and bumping `version` — nothing else needs rewiring.
+WhatsNew.enabled = false
+
 -- Bump ONLY when there is news to show. Login compares it to CoolPlanDB.lastWhatsNew;
 -- equal → nothing shows. A routine addon bump with no WhatsNew change stays silent.
 WhatsNew.version = "1.10.0"
@@ -154,6 +160,7 @@ end
 -- a login-after-login nag. Whole thing is pcall'd: a failure here is a silent no-op.
 function WhatsNew.MaybeShow()
   pcall(function()
+    if not WhatsNew.enabled then return end
     if type(CoolPlanDB) ~= "table" then return end
     if CoolPlanDB.lastWhatsNew == WhatsNew.version then return end
     CoolPlanDB.lastWhatsNew = WhatsNew.version
