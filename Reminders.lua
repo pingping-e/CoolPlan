@@ -465,7 +465,18 @@ ns.Reminders._fitHudWidth = fitHudWidth
 -- this function owns all Show/Hide + anchors + fonts (mirrors layoutHud).
 local QUEUE_PAD = 6
 local QUEUE_GAP = 3
-local QUEUE_SCALE = 0.5
+-- Queue size at slider 100%, relative to the HUD. Both numbers were tuned
+-- in-game and have been rebased together (0.5 / 26px originally, which read far
+-- too small at every usable slider value; each rebase multiplies BOTH so the
+-- slider's 100% keeps meaning "the size that looked right"). Above 1.0 the rows'
+-- text is larger than the HUD's own font, which is fine - the HUD still reads
+-- bigger through its 52px icon. Sizing the fonts/icons (rather than SetScale-ing
+-- the frame) keeps the text crisp at 100%.
+local QUEUE_SCALE = 1.29         -- row font = HUD font x this
+-- Icon-only rows use a FIXED icon, exactly like the HUD's icon-only style: font
+-- size must move text only, never the icon. Only the "iconName" style
+-- deliberately ties the icon to the text height so it can't dwarf the name.
+local QUEUE_ICON_SIZE = 30       -- px (the HUD's icon is ICON_SIZE = 52)
 
 local function ensureQueueRow(i)
   local row = queue.rows[i]
@@ -533,9 +544,10 @@ local function layoutQueueRow(row, style, tpos, size, countSize, isize, fontPath
     return totalW, barH
 
   elseif style == "icon" then
-    icon:SetSize(isize, isize); icon:SetPoint("LEFT", row, "LEFT", PAD, 0); icon:Show()
+    local qsz = QUEUE_ICON_SIZE -- fixed: independent of the font size (see above)
+    icon:SetSize(qsz, qsz); icon:SetPoint("LEFT", row, "LEFT", PAD, 0); icon:Show()
     bar:Hide(); name:Hide()
-    local totalW = PAD + isize + PAD
+    local totalW = PAD + qsz + PAD
     if tpos == "icon" then
       count:SetPoint("CENTER", icon, "CENTER", 0, 0); count:SetJustifyH("CENTER")
     else
@@ -543,7 +555,7 @@ local function layoutQueueRow(row, style, tpos, size, countSize, isize, fontPath
       totalW = totalW + 5 + math.max(16, size)
     end
     count:Show()
-    return totalW, isize
+    return totalW, qsz
 
   else -- iconName
     icon:SetSize(isize, isize); icon:SetPoint("LEFT", row, "LEFT", PAD, 0); icon:Show()
@@ -571,18 +583,37 @@ local function layoutQueueRows(o)
   local tpos = o.timePos or "icon"
   local fontPath = resolveFont(o)
   local size = math.max(8, math.floor((o.fontSize or 28) * QUEUE_SCALE))
-  local countSize = (tpos == "icon") and (size + math.floor(10 * QUEUE_SCALE)) or size
-  local isize = math.max(10, size) -- icon matches the queue text height (not 52*scale)
+  local isize = math.max(10, size) -- iconName/bar rows: icon = the row's text height
+  -- In-icon countdown: size it from the ICON it sits in, exactly like the HUD
+  -- does. Deriving it from the font (size + 10) made the queue's number BIGGER
+  -- than the HUD's at the same font setting - QUEUE_SCALE is > 1 - and it then
+  -- overflowed the smaller queue icon. The HUD puts a (fontSize + 10) number in
+  -- its 52px icon, so the icon-only row keeps that ratio at ITS icon size, and
+  -- the iconName row mirrors the HUD's "icon height - 4". (The bar style sets its
+  -- own count font from the bar height, below.)
+  local countSize
+  if tpos ~= "icon" then
+    countSize = size
+  elseif style == "icon" then
+    countSize = math.max(9, math.floor(((o.fontSize or 28) + 10) * (QUEUE_ICON_SIZE / ICON_SIZE)))
+  else
+    countSize = math.max(9, isize - 4)
+  end
   local c = o.textColor or { r = 1, g = 0.95, b = 0.4 }
   local top = QUEUE_PAD -- no header band (the "Next up" caption was removed)
   local n = o.queueCount or 3
 
+  -- While a demo/preview schedule is running, RenderTick owns which rows are
+  -- shown. Hiding them here (options change → relayout) would blank the rows for
+  -- one frame before the next tick re-shows them, i.e. flicker while dragging a
+  -- slider. Relayout only; let the tick keep its visibility.
+  local live = ns.Scheduler and ns.Scheduler.IsActive and ns.Scheduler.IsActive()
   local maxW, rowH = 1, isize
   for i = 1, n do
     local row = ensureQueueRow(i)
     local w, h = layoutQueueRow(row, style, tpos, size, countSize, isize, fontPath, c)
     row:SetSize(w, h)
-    row:Hide()
+    if not live then row:Hide() end
     if w > maxW then maxW = w end
     rowH = h
   end
@@ -650,6 +681,15 @@ local function showSample(o)
   o = o or ns.DB.Options()
   layoutHud(o)
   layoutQueueRows(o)
+  -- Same reason as above: with a demo/preview running, RenderTick owns the icon,
+  -- text and fitted widths. Stamping the sample on every options change made the
+  -- frames alternate between the real cue and the sample every frame - that's the
+  -- blinking icon while dragging the scale/size sliders. Relayout + show only.
+  if ns.Scheduler and ns.Scheduler.IsActive and ns.Scheduler.IsActive() then
+    hud.bg:Show(); hud.label:Show(); hud:Show(); hud._active = true
+    queue.bg:Show(); queue.label:Show(); queue:Show(); queue._live = true
+    return
+  end
   local sc = validColor(o.textColor) and o.textColor or { r = 1, g = 0.95, b = 0.4 }
   if hud.icon then hud.icon:SetTexture(136235) end -- generic icon
   hud.name:SetText("Cooldown name"); hud.name:SetTextColor(sc.r, sc.g, sc.b)
@@ -723,7 +763,7 @@ function Reminders.ApplyOptions()
   local c = o.textColor or { r = 1, g = 0.95, b = 0.4 }
 
   hud:SetScale(o.scale or 1)
-  queue:SetScale(o.scale or 1) -- queue tracks the global scale; rows are ~60% within
+  queue:SetScale(o.queueScale or 1) -- its own slider, independent of the HUD's
   -- style/timePos/font ownership lives in layoutHud (anchors + Show/Hide + fonts)
   layoutHud(o)
   hud.bar:SetStatusBarColor(c.r, c.g, c.b)
@@ -763,15 +803,23 @@ function Reminders.ResetPositions()
   --    TOP(-centre)-anchored UIParent-CENTER position. Anchoring by TOP (not
   --    TOPLEFT) keeps the queue CENTRED as its width changes cue-to-cue, instead
   --    of growing rightward from a pinned left edge (which looked like drifting).
+  -- The queue has its OWN scale (o.queueScale), so its GetLeft/GetTop are in
+  -- queue units while UIParent:GetCenter() is in UIParent units. `rel` converts
+  -- between them - without it the reset lands off-centre by exactly the scale
+  -- ratio (visible as soon as the queue scale differs from the HUD's).
+  local rel = queue:GetEffectiveScale() / UIParent:GetEffectiveScale()
+  if not (rel and rel > 0) then rel = 1 end
   queue:ClearAllPoints()
-  queue:SetPoint("TOP", hud, "BOTTOM", 0, -QUEUE_BELOW_GAP)
+  queue:SetPoint("TOP", hud, "BOTTOM", 0, -QUEUE_BELOW_GAP / rel)
   local qL, qW, top = queue:GetLeft(), queue:GetWidth(), queue:GetTop()
   local cx, cy = UIParent:GetCenter()
   local qcx = (qL and qW) and (qL + qW / 2) or nil
   if qcx and top and cx and cy then
     -- 3a. Re-anchor the queue's TOP-centre to UIParent CENTER and persist it.
+    --     Offsets passed to SetPoint are in the QUEUE's units, so bring the
+    --     UIParent centre into queue units (divide by rel) before subtracting.
     queue:ClearAllPoints()
-    queue:SetPoint("TOP", UIParent, "CENTER", qcx - cx, top - cy)
+    queue:SetPoint("TOP", UIParent, "CENTER", qcx - cx / rel, top - cy / rel)
     savePosition(queue, o.queueAnchor)
   else
     -- 3b. Frame rect not realized yet → GetLeft/GetTop returned nil. Do NOT

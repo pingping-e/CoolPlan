@@ -27,13 +27,18 @@ local defaults = {
     soundKit = "RAID_WARNING",
     countdownVoice = false, -- speak a 3-2-1 TTS countdown before each cue (separate from spell-name TTS)
     scale = 1.0,
+    -- The queue has its own size slider, INDEPENDENT of the HUD scale it used to
+    -- track: the rows are drawn at their own tuned base (QUEUE_SCALE /
+    -- QUEUE_ICON_SIZE in Reminders.lua), so raising the HUD scale alone never
+    -- made the queue readable enough.
+    queueScale = 1.0,
     fontSize = 25,
-    hudStyle = "iconName",    -- "icon" | "iconName" | "bar"
-    timePos = "right",        -- "icon" (inside icon/bar) | "right" (separate, on the right)
+    hudStyle = "icon",        -- "icon" | "iconName" | "bar"
+    timePos = "icon",         -- "icon" (inside icon/bar) | "right" (separate, on the right)
     textColor = { r = 1, g = 1, b = 1 },
     showQueue = true,
-    queueCount = 2,
-    queueWindow = 10,         -- only show queued cues casting within N seconds (10–30)
+    queueCount = 3,
+    queueWindow = 15,         -- only show queued cues casting within N seconds (10–30)
     categoryEnabled = {},
     hud = { point = "CENTER", relPoint = "CENTER", x = 0, y = 0, locked = true },
     -- queue sits centred directly BELOW the HUD (top-centre anchored to screen
@@ -144,6 +149,15 @@ function DB.Init()
     opt.ttsCountdown = nil
     opt.customSound = nil
     CoolPlanDB._migrAlertSound = true
+  end
+
+  -- One-time: the queue used to track the HUD scale. Existing installs keep the
+  -- size they had (queueScale = their scale); fresh installs get the 1.0 default
+  -- from deepFill below. Runs BEFORE deepFill so we read the saved scale.
+  -- /2.58 because the row size constant was rebased 0.5 → 1.29 at the same time:
+  -- (scale / 2.58) * 1.29 == the old scale * 0.5, i.e. pixel-identical.
+  if opt and opt.queueScale == nil and type(opt.scale) == "number" then
+    opt.queueScale = math.max(0.25, opt.scale / 2.58)
   end
 
   deepFill(CoolPlanDB, defaults)

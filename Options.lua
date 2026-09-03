@@ -35,8 +35,17 @@ local function soundName(v)
   return v
 end
 
+-- Sliders fire OnValueChanged several times per frame while being dragged, and
+-- each ApplyOptions rebuilds fonts, sizes and anchors for both frames. Coalesce
+-- them into ONE apply on the next frame so a drag relayouts once per frame.
+local applyPending
 local function refresh()
-  if ns.Reminders then ns.Reminders.ApplyOptions() end
+  if not ns.Reminders or applyPending then return end
+  applyPending = true
+  C_Timer.After(0, function()
+    applyPending = false
+    ns.safecall(ns.Reminders.ApplyOptions)
+  end)
 end
 
 local function header(parent, text, x, y)
@@ -128,7 +137,16 @@ local function showResetConfirm()
     lbl:SetWidth(324)
     lbl:SetText("Reset all CoolPlan settings to defaults?\nYour UI will reload. Saved plans are kept; HUD and queue positions reset too.")
     local ok = button(f, OKAY or "Okay", 90, 0, 0, function()
-      f:Hide(); ns.DB.ResetOptions(); ReloadUI()
+      f:Hide()
+      ns.DB.ResetOptions()
+      -- Recompute the queue's default spot from the freshly-reset HUD (centred,
+      -- queue directly below) instead of leaving the static fallback anchor -
+      -- that fallback is a fixed -40 offset and drifts once scales differ.
+      if ns.Reminders then
+        ns.Reminders.ApplyOptions()
+        ns.Reminders.ResetPositions()
+      end
+      ReloadUI()
     end)
     ok:ClearAllPoints(); ok:SetPoint("BOTTOMRIGHT", -18, 16)
     local cancel = button(f, CANCEL or "Cancel", 90, 0, 0, function() f:Hide() end)
@@ -303,7 +321,7 @@ function Options.BuildPage(host)
   -- anchoring its container to host TOP keeps it band-centered as the window
   -- resizes, instead of staying glued to the left next to Alerts) ──
   local timingCol = CreateFrame("Frame", nil, host)
-  timingCol:SetSize(200, 360)
+  timingCol:SetSize(200, 420)
   timingCol:SetPoint("TOP", host, "TOP", -16, -8)
   header(timingCol, "Timing", 4, 0)
   slider(timingCol, "On-screen lead (s)", 4, -24, 0, 10, 1,
@@ -363,10 +381,17 @@ function Options.BuildPage(host)
   -- only list queued cues casting within this many seconds (10–30).
   slider(timingCol, "Queue window (s)", 4, -276, 10, 30, 1,
     function() return o.queueWindow or 10 end, function(v) o.queueWindow = v end)
+  -- Separate from the HUD scale (the queue used to just track it, which left the
+  -- queue too small at every usable HUD scale). 100% is the tuned base in
+  -- Reminders.lua; the range is wide because the two frames are sized for
+  -- different jobs - a big "now" alert vs. a compact "next up" list.
+  slider(timingCol, "Queue scale (%)", 4, -330, 25, 300, 5,
+    function() return math.floor((o.queueScale or 1) * 100) end,
+    function(v) o.queueScale = v / 100 end)
 
   -- ── right column: HUD (appearance only; queue lives in the middle column) ──
   header(rcol, "HUD", RX, -8)
-  slider(rcol, "Scale (%)", RX, -32, 50, 200, 5,
+  slider(rcol, "HUD scale (%)", RX, -32, 50, 200, 5,
     function() return math.floor((o.scale or 1) * 100) end,
     function(v) o.scale = v / 100 end)
   slider(rcol, "Font size", RX, -86, 12, 48, 1,
@@ -468,11 +493,14 @@ function Options.BuildPage(host)
   -- ── categories (a responsive grid across the lower-left/middle band; it sits
   -- BELOW the Timing+Queue middle column so its wide rows never overlap them,
   -- and reflows its column count with the window width) ──
-  header(host, "Show categories", LX, -344)
+  -- -396: clears the middle column, which now ends at the Queue scale slider
+  -- (its low/high labels reach ~-382 in host coords). Bump both this and CAT_Y0
+  -- together whenever a widget is appended to the Timing/Queue column.
+  header(host, "Show categories", LX, -396)
   local catBoxes = {}
   for _, c in ipairs(CATEGORIES) do
     local key = c[1]
-    local cb = checkbox(host, c[2], LX, -368,
+    local cb = checkbox(host, c[2], LX, -420,
       function() return ns.DB.CategoryEnabled(key) end,
       function(v)
         -- enabled = nil (default-on), disabled = false. NOTE: `v and nil or false`
@@ -481,7 +509,7 @@ function Options.BuildPage(host)
       end)
     catBoxes[#catBoxes + 1] = cb
   end
-  local CAT_COL_W, CAT_ROW_H, CAT_Y0 = 185, 26, -368
+  local CAT_COL_W, CAT_ROW_H, CAT_Y0 = 185, 26, -420
   local function layoutCategories()
     -- keep the grid clear of the right-hand HUD column (~250px). Guard a 0 width
     -- (host rect not realized on the first synchronous call): 0 is truthy in Lua,
